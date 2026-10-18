@@ -1,0 +1,3 @@
+- [x] Implement logic for empty files and tiny files. Empty files keep their existing special sync handling; short non-empty text now uses a conservative word-overlap similarity fallback.
+- [ ] Later: automate new-computer setup for the owner cloning this repository. Add a VS Code task that bootstraps the development environment without Android Studio: Python, Kotlin, JDK, Android SDK command-line/build tools, emulator, system image, and configured AVD, plus the VS Code Android emulator launcher extension. Have it detect existing installs, explain prerequisites and any steps that cannot be automated, and avoid doing this setup until explicitly requested.
+      "10172026--{{project}}--Init commit"
