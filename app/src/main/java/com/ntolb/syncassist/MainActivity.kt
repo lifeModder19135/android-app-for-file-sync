@@ -32,12 +32,16 @@ class MainActivity : Activity() {
     private var currentSetId: String? = null
     private var pendingSetId: String? = null
     private var pendingExternalFile: SyncFile? = null
+    private var pendingExternalEdit: Pair<String, String>? = null
     private var awaitingOverlayPermission = false
+    private val pendingBlocked = mutableListOf<BlockedSet>()
+    private var warningShowing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = StateStore(this)
         currentSetId = savedInstanceState?.getString(STATE_CURRENT_SET_ID)
+        pendingSetId = savedInstanceState?.getString(STATE_PENDING_SET_ID)
         try {
             state = store.load()
         } catch (error: Exception) {
@@ -45,12 +49,17 @@ class MainActivity : Activity() {
         }
         scheduleSync()
         render()
+        if (SyncRunTracker.shouldCatchUp(this)) runSync(showResult = false)
     }
 
     override fun onResume() {
         super.onResume()
         ReturnToAppOverlayService.stop(this)
-        if (::store.isInitialized) runSync(showResult = false)
+        val externalEdit = pendingExternalEdit
+        pendingExternalEdit = null
+        if (::store.isInitialized && externalEdit != null) {
+            runSync(showResult = false, profileId = externalEdit.first, setId = externalEdit.second)
+        }
         if (awaitingOverlayPermission) {
             awaitingOverlayPermission = false
             val file = pendingExternalFile
@@ -65,7 +74,18 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_CURRENT_SET_ID, currentSetId)
+        outState.putString(STATE_PENDING_SET_ID, pendingSetId)
         super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Use OnBackPressedDispatcher for production builds.")
+    override fun onBackPressed() {
+        if (currentSetId != null) {
+            currentSetId = null
+            render()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     override fun onDestroy() {
@@ -140,6 +160,7 @@ class MainActivity : Activity() {
                     runSync(showResult = true, profileId = profile.id, setId = set.id)
                 },
             )
+            list.addView(actionButton("Delete ${set.name}") { confirmDeleteSet(profile, set) })
         }
         if (profile.sets.isEmpty()) {
             list.addView(body("No sets yet. Create a set and add at least two local text files."))
@@ -151,6 +172,7 @@ class MainActivity : Activity() {
         root.addView(actionButton("Add set") { showCreateSet() })
         root.addView(actionButton("Sync now") { runSync(showResult = true) })
         root.addView(actionButton("Profile") { showProfile(profile) })
+        root.post { showNextBlockedWarning() }
     }
 
     private fun renderSetEditor(profile: Profile, set: SyncSet) {
@@ -159,6 +181,10 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(18), dp(20), dp(18))
         }
         setContentView(ScrollView(this).apply { addView(root) })
+        root.addView(actionButton("← Back to sets") {
+            currentSetId = null
+            render()
+        })
         root.addView(title(set.name))
         root.addView(body("Local UTF-8 text files only: .txt, .md, .html, .py, .js, .java"))
         val initialSyncPending = set.files.none { it.baselineHash.isNotBlank() }
@@ -211,6 +237,12 @@ class MainActivity : Activity() {
                 },
             )
         }
+        root.addView(
+            body(
+                "Select files in Android's picker, then tap its Open/Select action to add them. " +
+                    "Use the picker's Back control to return without adding.",
+            ),
+        )
         root.addView(actionButton("Add local files") {
             pendingSetId = set.id
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -218,7 +250,8 @@ class MainActivity : Activity() {
                 type = "*/*"
                 addFlags(
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
                 )
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }
@@ -229,10 +262,6 @@ class MainActivity : Activity() {
                 runSync(showResult = true, profileId = profile.id, setId = set.id)
             },
         )
-        root.addView(actionButton("Back to sets") {
-            currentSetId = null
-            render()
-        })
     }
 
     private fun renderCurrentSet() {
@@ -313,6 +342,18 @@ class MainActivity : Activity() {
                 }
                 dialog.show()
             }
+    }
+
+    private fun confirmDeleteSet(profile: Profile, set: SyncSet) {
+        AlertDialog.Builder(this)
+            .setTitle("Delete set?")
+            .setMessage("Remove \"${set.name}\" and its saved sync settings? The files themselves will not be deleted.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete") { _, _ ->
+                pendingBlocked.removeAll { it.profileId == profile.id && it.setId == set.id }
+                updateProfile(profile.copy(sets = profile.sets.filterNot { it.id == set.id }))
+            }
+            .show()
     }
 
     private fun chooseMasterVersion(profile: Profile, set: SyncSet) {
@@ -402,12 +443,15 @@ class MainActivity : Activity() {
     @Deprecated("Use the Activity Result API in production builds.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_FILES || resultCode != RESULT_OK || data == null) return
+        if (requestCode != REQUEST_FILES) return
         val setId = pendingSetId ?: return
+        pendingSetId = null
+        if (resultCode != RESULT_OK || data == null) return
         val uris = buildList {
+            data.data?.let(::add)
             data.clipData?.let { clip ->
                 for (index in 0 until clip.itemCount) add(clip.getItemAt(index).uri)
-            } ?: data.data?.let(::add)
+            }
         }.distinct()
         val profile = activeProfile() ?: return
         val set = profile.sets.firstOrNull { it.id == setId } ?: return
@@ -436,6 +480,12 @@ class MainActivity : Activity() {
                 similarityApproved = set.similarityApproved && merged.size == set.files.size,
             ),
         )
+        val addedCount = merged.size - set.files.size
+        if (addedCount > 0) {
+            Toast.makeText(this, "Added $addedCount file(s) to ${set.name}.", Toast.LENGTH_LONG).show()
+        } else if (uris.isNotEmpty()) {
+            Toast.makeText(this, "No new supported files were added.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun displayName(uri: Uri): String? =
@@ -474,12 +524,19 @@ class MainActivity : Activity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         try {
+            pendingExternalEdit = activeProfile()?.let { profile ->
+                profile.sets.firstOrNull { set ->
+                    set.id == currentSetId && set.files.any { it.location == file.location }
+                }?.let { set -> profile.id to set.id }
+            }
             startService(Intent(this, ReturnToAppOverlayService::class.java))
             startActivity(Intent.createChooser(intent, "Edit ${file.name}"))
         } catch (error: android.content.ActivityNotFoundException) {
+            pendingExternalEdit = null
             stopService(Intent(this, ReturnToAppOverlayService::class.java))
             showError("No installed app can edit ${file.name}.")
         } catch (error: SecurityException) {
+            pendingExternalEdit = null
             stopService(Intent(this, ReturnToAppOverlayService::class.java))
             showError("Could not open the return-to-app button: ${error.message}")
         }
@@ -491,7 +548,7 @@ class MainActivity : Activity() {
         setId: String? = null,
     ) {
         val nextState = when {
-            setId != null && profileId != null -> state.copy(
+            showResult && setId != null && profileId != null -> state.copy(
                 profiles = state.profiles.map { profile ->
                     if (profile.id != profileId) profile else profile.copy(
                         sets = profile.sets.map { set ->
@@ -500,7 +557,7 @@ class MainActivity : Activity() {
                     )
                 },
             )
-            setId == null && showResult -> state.copy(
+            showResult && setId == null -> state.copy(
                 profiles = state.profiles.map { profile ->
                     profile.copy(sets = profile.sets.map { it.copy(syncEnabled = true) })
                 },
@@ -529,6 +586,9 @@ class MainActivity : Activity() {
                     engine.syncAll()
                 }
                 blocked = result.blocked
+                if ((profileId == null || setId == null) && blocked.isEmpty()) {
+                    SyncRunTracker.record(this)
+                }
                 "Sync complete. Updated ${result.updatedSets} set(s)."
             } catch (error: IOException) {
                 shouldNotify = true
@@ -546,16 +606,35 @@ class MainActivity : Activity() {
                 }
                 if (shouldNotify) Toast.makeText(this, outcome, Toast.LENGTH_LONG).show()
                 if (shouldNotify || blocked.isNotEmpty()) refresh()
-                promptBlocked(blocked)
+                enqueueBlockedWarnings(blocked)
             }
         }
     }
 
-    private var warningShowing = false
+    private fun enqueueBlockedWarnings(blocked: List<BlockedSet>) {
+        blocked.forEach { item ->
+            if (pendingBlocked.none { it.profileId == item.profileId && it.setId == item.setId }) {
+                pendingBlocked.add(item)
+            }
+        }
+        showNextBlockedWarning()
+    }
 
-    private fun promptBlocked(queue: List<BlockedSet>) {
-        val next = queue.firstOrNull() ?: return
-        if (warningShowing || isFinishing) return
+    private fun showNextBlockedWarning() {
+        if (warningShowing || isFinishing || currentSetId != null || activeProfile() == null) return
+        while (pendingBlocked.isNotEmpty()) {
+            val candidate = pendingBlocked.removeAt(0)
+            val setStillExists = state.profiles.any { profile ->
+                profile.id == candidate.profileId && profile.sets.any { it.id == candidate.setId }
+            }
+            if (setStillExists) {
+                showBlockedWarning(candidate)
+                return
+            }
+        }
+    }
+
+    private fun showBlockedWarning(next: BlockedSet) {
         warningShowing = true
         val lines = buildList {
             next.report.nameIssues.forEach {
@@ -575,12 +654,16 @@ class MainActivity : Activity() {
             .setPositiveButton("Sync anyway") { _, _ ->
                 warningShowing = false
                 approveAndSync(next)
+                showNextBlockedWarning()
             }
             .setNegativeButton("Not now") { _, _ ->
                 warningShowing = false
-                promptBlocked(queue.drop(1))
+                showNextBlockedWarning()
             }
-            .setOnCancelListener { warningShowing = false }
+            .setOnCancelListener {
+                warningShowing = false
+                showNextBlockedWarning()
+            }
             .show()
     }
 
@@ -691,9 +774,10 @@ class MainActivity : Activity() {
 
     companion object {
         private const val STATE_CURRENT_SET_ID = "currentSetId"
+        private const val STATE_PENDING_SET_ID = "pendingSetId"
         private const val REQUEST_FILES = 21
         private const val SYNC_JOB_ID = 51429
-        private const val SYNC_INTERVAL_MS = 15 * 60 * 1000L
+        private const val SYNC_INTERVAL_MS = SyncRunTracker.SYNC_INTERVAL_MS
         private val SUPPORTED_TYPES = setOf("txt", "md", "html", "py", "js", "java")
     }
 }

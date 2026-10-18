@@ -25,9 +25,10 @@ weakening the rule that a sync must stop if its safety snapshot fails.
 
 ### Improve background reliability
 
-The local MVP syncs on app open/resume and schedules periodic work subject to
-Android's minimum interval and execution limits. Later work should improve
-retry, recovery, sync status, and reconciliation after provider or device
+The local MVP schedules periodic work subject to Android's minimum interval
+and execution limits, and catches up at app launch when the last completed
+all-set run is at least one interval old. Later work should improve retry,
+recovery, sync status, and reconciliation after provider or device
 interruptions; do not promise continuous or instant sync where Android cannot
 provide it.
 
@@ -68,6 +69,14 @@ the behavior.
 - Opening a file requests Android's explicit “display over other apps”
   permission and, if granted, shows a temporary **Return to SyncAssist**
   overlay while the external editor is open.
+- Set-editing screens have visible and device-Back navigation to the sets
+  list. Android's document picker returns selected supported files directly to
+  the active set, with confirmation; sets can be deleted without deleting
+  their underlying documents.
+- A scheduled all-set run with mismatch warnings does not advance the
+  last-successful-sync time; the next app launch performs a foreground
+  catch-up so its warning can be shown. Warnings are deferred until the sets
+  list is visible and include the affected set and mismatch details.
 
 ## Application identity
 

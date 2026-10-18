@@ -66,14 +66,35 @@ grants. If no installed app can handle that intent, the user gets an error.
 
 ## When sync runs
 
-There are two app entry points:
+Sync runs from these entry points:
 
-1. `MainActivity.onResume()` starts a sync without a completion toast. The **Sync
-   now** and **Sync this set now** buttons start a sync with a completion or
-   failure toast.
+1. Returning from an external editor starts a silent, targeted sync for the
+   edited file's set. It does not enable a paused set. The **Sync now** and
+   **Sync this set now** buttons enable the relevant sets and start a sync with
+   a completion or failure toast.
 2. `MainActivity.onCreate()` schedules a persisted Android `JobScheduler` job
    at a fixed 15-minute periodic interval. Android can defer jobs. The job
    service calls the same sync engine across all saved profiles and sets.
+3. At app launch, `MainActivity` checks the timestamp of the last completed,
+   unblocked all-set sync. It immediately starts a catch-up sync if none has
+   completed or at least one 15-minute interval has elapsed since it
+   completed. Scheduled jobs and foreground sync-all runs record this
+   timestamp only when no set was blocked; a targeted one-set sync does not.
+   This ensures a background similarity warning is surfaced by a foreground
+   catch-up run rather than being silently lost.
+
+Ordinary activity resumes—including returning from the file picker—do not
+start a sync. Newly created sets therefore remain uninspected while the user is
+adding files and preparing the set, until a manual sync action enables them.
+The engine also skips any set with fewer than two stored files before reading
+file contents or running similarity checks.
+
+Similarity warning results are queued in the activity and shown only while the
+sets list is visible, never over the set editor. Returning to the sets list
+shows the set name and each mismatch's filename, closest match, measured score,
+and threshold. Android's document picker owns its own navigation; its Back
+control returns to the set editor, and selected supported documents are added
+to that set when the picker returns.
 
 The activity uses a single-thread executor. The job service has its own
 single-thread executor. `LocalSyncEngine.syncAll()` and `syncSet(profileId,

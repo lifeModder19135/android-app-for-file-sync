@@ -60,11 +60,16 @@ link/shortcut to an online Google document, not a local document copy.
   storage (`files/backups/<profile id>`), using the bundled JGit library
   because Android apps have no `git` command. History is not yet browsable in
   the app.
-- The MVP syncs when opened/resumed and schedules Android background work at
-  the platform minimum periodic interval (15 minutes). Android may defer jobs;
-  it does not promise instant or uninterrupted background sync. The product
-  goal for later phases is to sync as often as the platform permits and to
-  reconcile after interruptions using the most-recent-change-wins policy.
+- The MVP schedules Android background work at the platform minimum periodic
+  interval (15 minutes). Android may defer jobs; it does not promise instant
+  or uninterrupted background sync. On app launch, a catch-up sync runs if no
+  unblocked all-set sync has completed yet or the last one was at least one interval ago.
+  Similarity warnings wait until the user returns to the sets screen.
+- The set editor has both an in-app back control and device Back navigation.
+  Adding files opens Android's document picker; returning from it adds all
+  supported selected files to the set and confirms how many were added. Sets
+  can be deleted from the sets list; deletion removes only the set configuration,
+  not the underlying files.
 - Files are selected with Android's Storage Access Framework. Access is stored
   as a persisted `content://` URI grant rather than a raw filesystem path;
   Android scoped storage does not give apps reliable access to arbitrary paths.

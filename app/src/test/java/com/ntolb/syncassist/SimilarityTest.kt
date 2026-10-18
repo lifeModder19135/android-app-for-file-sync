@@ -121,6 +121,17 @@ class SimilarityTest {
     }
 
     @Test
+    fun oneFileCannotProduceSimilarityIssues() {
+        val report = SimilarityCheck.evaluate(
+            listOf("notes.txt"),
+            listOf(paragraphA),
+            SimilaritySettings(),
+        )
+
+        assertFalse(report.hasIssues)
+    }
+
+    @Test
     fun similarityCheckRequiresOneContentForEachName() {
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
             SimilarityCheck.evaluate(

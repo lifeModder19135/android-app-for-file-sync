@@ -12,7 +12,10 @@ class LocalSyncJobService : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         executor.execute {
             try {
-                LocalSyncEngine(contentResolver, StateStore(this), VersionBackup.forContext(this)).syncAll()
+                val result =
+                    LocalSyncEngine(contentResolver, StateStore(this), VersionBackup.forContext(this))
+                        .syncAll()
+                if (result.blocked.isEmpty()) SyncRunTracker.record(this)
             } catch (error: IOException) {
                 Log.e(TAG, "Local file sync failed.", error)
             } catch (error: SecurityException) {
