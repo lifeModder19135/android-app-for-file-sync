@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import org.eclipse.jgit.api.Git
 import org.junit.Assert.assertEquals

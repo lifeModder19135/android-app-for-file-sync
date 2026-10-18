@@ -21,11 +21,13 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# Temporary handoff and scratch material
+# Temporary handoff and personal material
 /handoff/
 /scratch
 /scr
 /scr-*
+/personal/
+/personal/**
 
 # User data
 /key.txt

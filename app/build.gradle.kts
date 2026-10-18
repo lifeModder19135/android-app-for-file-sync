@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.teches.filesync"
+    namespace = "com.ntolb.syncassist"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.teches.filesync"
+        applicationId = "com.ntolb.syncassist"
         minSdk = 26
         targetSdk = 35
         versionCode = providers.gradleProperty("app.versionCode").get().toInt()

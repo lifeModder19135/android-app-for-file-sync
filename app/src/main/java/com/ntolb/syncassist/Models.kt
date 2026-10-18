@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 data class SyncFile(
     val name: String,
@@ -13,6 +13,7 @@ data class SyncSet(
     val files: List<SyncFile> = emptyList(),
     val masterFileLocation: String? = null,
     val similarityApproved: Boolean = false,
+    val syncEnabled: Boolean = true,
 )
 
 data class SimilaritySettings(

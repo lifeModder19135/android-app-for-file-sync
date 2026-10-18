@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -9,6 +9,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.util.Patterns
 import android.view.Gravity
 import android.view.View
@@ -30,10 +31,13 @@ class MainActivity : Activity() {
     private var state = AppState()
     private var currentSetId: String? = null
     private var pendingSetId: String? = null
+    private var pendingExternalFile: SyncFile? = null
+    private var awaitingOverlayPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = StateStore(this)
+        currentSetId = savedInstanceState?.getString(STATE_CURRENT_SET_ID)
         try {
             state = store.load()
         } catch (error: Exception) {
@@ -45,7 +49,23 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        ReturnToAppOverlayService.stop(this)
         if (::store.isInitialized) runSync(showResult = false)
+        if (awaitingOverlayPermission) {
+            awaitingOverlayPermission = false
+            val file = pendingExternalFile
+            pendingExternalFile = null
+            if (Settings.canDrawOverlays(this) && file != null) {
+                launchExternalEditor(file)
+            } else if (file != null) {
+                showError("Overlay permission is required to show the return-to-app button.")
+            }
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_CURRENT_SET_ID, currentSetId)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
@@ -115,6 +135,11 @@ class MainActivity : Activity() {
                     render()
                 },
             )
+            list.addView(
+                actionButton("${if (set.syncEnabled) "Sync" else "Start sync for"} ${set.name}") {
+                    runSync(showResult = true, profileId = profile.id, setId = set.id)
+                },
+            )
         }
         if (profile.sets.isEmpty()) {
             list.addView(body("No sets yet. Create a set and add at least two local text files."))
@@ -162,6 +187,9 @@ class MainActivity : Activity() {
                 body("Initial sync complete. The most recently modified changed file wins."),
             )
         }
+        if (!set.syncEnabled) {
+            root.addView(body("Syncing is paused for this new set until you manually start it."))
+        }
         set.files.forEach { file ->
             root.addView(
                 actionButton(
@@ -196,7 +224,11 @@ class MainActivity : Activity() {
             }
             startActivityForResult(intent, REQUEST_FILES)
         })
-        root.addView(actionButton("Sync this set now") { runSync(showResult = true) })
+        root.addView(
+            actionButton(if (set.syncEnabled) "Sync this set now" else "Start syncing this set") {
+                runSync(showResult = true, profileId = profile.id, setId = set.id)
+            },
+        )
         root.addView(actionButton("Back to sets") {
             currentSetId = null
             render()
@@ -269,7 +301,7 @@ class MainActivity : Activity() {
                             return@setOnClickListener
                         }
                         val profile = activeProfile() ?: return@setOnClickListener
-                        val set = SyncSet(UUID.randomUUID().toString(), name)
+                        val set = SyncSet(UUID.randomUUID().toString(), name, syncEnabled = false)
                         currentSetId = set.id
                         updateProfile(
                             profile.copy(
@@ -412,23 +444,90 @@ class MainActivity : Activity() {
         }
 
     private fun openFile(file: SyncFile) {
+        if (!Settings.canDrawOverlays(this)) {
+            pendingExternalFile = file
+            AlertDialog.Builder(this)
+                .setTitle("Enable return-to-app button")
+                .setMessage(
+                    "SyncAssist needs permission to show a small button over the text editor, " +
+                        "so you can return here even if the editor's Back button is unavailable.",
+                )
+                .setNegativeButton("Cancel") { _, _ -> pendingExternalFile = null }
+                .setPositiveButton("Open settings") { _, _ ->
+                    awaitingOverlayPermission = true
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                }
+                .show()
+            return
+        }
+        launchExternalEditor(file)
+    }
+
+    private fun launchExternalEditor(file: SyncFile) {
         val intent = Intent(Intent.ACTION_EDIT).apply {
             setDataAndType(Uri.parse(file.location), mimeType(file.type))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         try {
+            startService(Intent(this, ReturnToAppOverlayService::class.java))
             startActivity(Intent.createChooser(intent, "Edit ${file.name}"))
         } catch (error: android.content.ActivityNotFoundException) {
+            stopService(Intent(this, ReturnToAppOverlayService::class.java))
             showError("No installed app can edit ${file.name}.")
+        } catch (error: SecurityException) {
+            stopService(Intent(this, ReturnToAppOverlayService::class.java))
+            showError("Could not open the return-to-app button: ${error.message}")
         }
     }
 
-    private fun runSync(showResult: Boolean) {
+    private fun runSync(
+        showResult: Boolean,
+        profileId: String? = null,
+        setId: String? = null,
+    ) {
+        val nextState = when {
+            setId != null && profileId != null -> state.copy(
+                profiles = state.profiles.map { profile ->
+                    if (profile.id != profileId) profile else profile.copy(
+                        sets = profile.sets.map { set ->
+                            if (set.id == setId) set.copy(syncEnabled = true) else set
+                        },
+                    )
+                },
+            )
+            setId == null && showResult -> state.copy(
+                profiles = state.profiles.map { profile ->
+                    profile.copy(sets = profile.sets.map { it.copy(syncEnabled = true) })
+                },
+            )
+            else -> state
+        }
+        if (nextState != state) {
+            try {
+                synchronized(StateStore.processLock) {
+                    store.save(nextState)
+                    state = nextState
+                }
+            } catch (error: IOException) {
+                showError("Could not save sync settings: ${error.message}")
+                return
+            }
+        }
         io.execute {
             var shouldNotify = showResult
             var blocked = emptyList<BlockedSet>()
             val outcome = try {
-                val result = LocalSyncEngine(contentResolver, store, VersionBackup.forContext(this)).syncAll()
+                val engine = LocalSyncEngine(contentResolver, store, VersionBackup.forContext(this))
+                val result = if (profileId != null && setId != null) {
+                    engine.syncSet(profileId, setId)
+                } else {
+                    engine.syncAll()
+                }
                 blocked = result.blocked
                 "Sync complete. Updated ${result.updatedSets} set(s)."
             } catch (error: IOException) {
@@ -489,7 +588,7 @@ class MainActivity : Activity() {
         val profile = state.profiles.firstOrNull { it.id == blocked.profileId } ?: return
         val set = profile.sets.firstOrNull { it.id == blocked.setId } ?: return
         updateSet(profile, set.copy(similarityApproved = true))
-        runSync(showResult = true)
+        runSync(showResult = true, profileId = profile.id, setId = set.id)
     }
 
     private fun percent(score: Double) = "${(score * 100).toInt()}%"
@@ -591,6 +690,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val STATE_CURRENT_SET_ID = "currentSetId"
         private const val REQUEST_FILES = 21
         private const val SYNC_JOB_ID = 51429
         private const val SYNC_INTERVAL_MS = 15 * 60 * 1000L

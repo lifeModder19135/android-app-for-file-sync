@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import android.content.ContentResolver
 import android.net.Uri
@@ -22,6 +22,7 @@ object SyncPolicy {
     /** Whitespace-only files count as empty: they carry no content worth protecting or syncing from. */
     fun isEmpty(file: ObservedFile): Boolean = file.content.isBlank()
 
+    /** Chooses the last changed file among the given files, ignoring those that match their baseline hash. */
     fun chooseLastChanged(files: List<ObservedFile>): ObservedFile? =
         files.filter { it.hash != it.baselineHash }.maxWithOrNull(
             compareBy<ObservedFile> { it.modifiedAt }.thenBy { it.index },
@@ -60,12 +61,32 @@ class LocalSyncEngine(
 ) {
     @Throws(IOException::class)
     fun syncAll(): SyncResult = synchronized(StateStore.processLock) {
+        sync(store.load())
+    }
+
+    @Throws(IOException::class)
+    fun syncSet(profileId: String, setId: String): SyncResult = synchronized(StateStore.processLock) {
         val state = store.load()
+        val profile = state.profiles.firstOrNull { it.id == profileId }
+            ?: throw IOException("Profile \"$profileId\" was not found.")
+        profile.sets.firstOrNull { it.id == setId }
+            ?: throw IOException("Set \"$setId\" was not found.")
+        sync(state, profileId, setId)
+    }
+
+    private fun sync(
+        state: AppState,
+        targetProfileId: String? = null,
+        targetSetId: String? = null,
+    ): SyncResult {
         var synchronizedSets = 0
         val blocked = mutableListOf<BlockedSet>()
         val updatedProfiles = state.profiles.map { profile ->
             profile.copy(
                 sets = profile.sets.map { set ->
+                    val isTarget = targetSetId == null ||
+                        (profile.id == targetProfileId && set.id == targetSetId)
+                    if (!isTarget || !set.syncEnabled) return@map set
                     val outcome = syncSet(profile.id, set, state.similarity)
                     outcome.report?.let { blocked.add(BlockedSet(profile.id, set.id, set.name, it)) }
                     if (outcome.set != set) synchronizedSets++
@@ -76,7 +97,7 @@ class LocalSyncEngine(
         if (updatedProfiles != state.profiles) {
             store.save(state.copy(profiles = updatedProfiles))
         }
-        SyncResult(synchronizedSets, blocked)
+        return SyncResult(synchronizedSets, blocked)
     }
 
     private fun overwrite(file: SyncFile, content: String) {

@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import java.io.ByteArrayInputStream
 import java.nio.charset.MalformedInputException

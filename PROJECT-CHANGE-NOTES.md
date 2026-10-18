@@ -55,6 +55,28 @@ patterns remains useful; any proposal to tune the threshold or tokenization
 should be recorded as a new observation in `TESTING-NOTES.md` before changing
 the behavior.
 
+## Recent sync workflow changes
+
+- Newly created sets start paused from automatic app-resume and scheduled sync.
+  The user can start one set explicitly or use the global Sync now action to
+  enable and sync all sets. Previously saved sets default to enabled when the
+  new persisted field is absent.
+- Blank and whitespace-only file contents are excluded inside the similarity
+  evaluator from both filename and content checks, so callers cannot
+  accidentally generate warnings for blank entries.
+- A targeted one-set sync entry point is available separately from sync-all.
+- Opening a file requests Android's explicit “display over other apps”
+  permission and, if granted, shows a temporary **Return to SyncAssist**
+  overlay while the external editor is open.
+
+## Application identity
+
+The Kotlin/Java package, Android namespace, and application ID are
+`com.ntolb.syncassist`. The earlier `com.teches.filesync` identity belonged to
+another project and must not be reintroduced. Changing the application ID
+creates a separate Android installation with separate private state; preserve
+old installs unless the user explicitly requests removal or data migration.
+
 ## Version record
 
 The packaged app version is maintained as `app.versionName` and

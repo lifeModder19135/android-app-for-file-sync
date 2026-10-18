@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -96,6 +96,39 @@ class SimilarityTest {
         val report = SimilarityCheck.evaluate(names, contents, SimilaritySettings())
         assertEquals(listOf("grocery-list.txt"), report.nameIssues.map { it.fileName })
         assertEquals(listOf("grocery-list.txt"), report.contentIssues.map { it.fileName })
+    }
+
+    @Test
+    fun blankFilesAreExcludedFromBothSimilarityChecks() {
+        val report = SimilarityCheck.evaluate(
+            listOf("notes.txt", "notes-copy.txt", "unrelated-name.pdf"),
+            listOf("$paragraphA $paragraphB", "$paragraphA $paragraphB", " \n\t"),
+            SimilaritySettings(),
+        )
+
+        assertFalse(report.hasIssues)
+    }
+
+    @Test
+    fun aSingleTextBearingFileIsNotComparedAgainstBlankFiles() {
+        val report = SimilarityCheck.evaluate(
+            listOf("notes.txt", "unrelated-a.bin", "unrelated-b.doc"),
+            listOf(paragraphA, "", "  "),
+            SimilaritySettings(),
+        )
+
+        assertFalse(report.hasIssues)
+    }
+
+    @Test
+    fun similarityCheckRequiresOneContentForEachName() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            SimilarityCheck.evaluate(
+                listOf("notes.txt"),
+                emptyList(),
+                SimilaritySettings(),
+            )
+        }
     }
 
     @Test

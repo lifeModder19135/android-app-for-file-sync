@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import android.content.Context
 import android.util.AtomicFile
@@ -101,6 +101,7 @@ class StateStore(context: Context) {
                             masterFileLocation = set.optString("master file location")
                                 .takeIf { it.isNotBlank() && it != "null" },
                             similarityApproved = set.optBoolean("similarity approved", false),
+                            syncEnabled = set.optBoolean("sync enabled", true),
                         ),
                     )
                 }
@@ -132,6 +133,7 @@ class StateStore(context: Context) {
                             .put("name", set.name)
                             .put("master file location", set.masterFileLocation)
                             .put("similarity approved", set.similarityApproved)
+                            .put("sync enabled", set.syncEnabled)
                             .put(
                                 "files",
                                 JSONArray().apply {

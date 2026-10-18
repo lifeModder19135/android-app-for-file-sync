@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import android.app.job.JobParameters
 import android.app.job.JobService

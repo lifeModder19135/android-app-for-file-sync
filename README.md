@@ -1,5 +1,7 @@
 # File Sync for Android (local MVP)
 
+Android application ID and Kotlin package: `com.ntolb.syncassist`.
+
 This first milestone implements local profiles and sets, lets users select local
 UTF-8 text files through Android's document picker, stores app data in
 `files/sets.json`, and synchronizes the selected files with a last-change-wins
@@ -15,7 +17,13 @@ link/shortcut to an online Google document, not a local document copy.
 
 ## Sync behavior and limitations
 
+- For the exact execution order of file selection/validation, similarity
+  scoring, source selection, overwrites, backups, and failure handling, see
+  [SYNC-ALGORITHM.md](./SYNC-ALGORITHM.md).
 - Each set needs at least two files to synchronize.
+- A newly created set stays paused from automatic syncing until the user
+  manually syncs that set. The global **Sync now** action explicitly enables
+  and syncs all sets; a per-set **Sync** action affects only that set.
 - Choose a master version for each set. On first sync, its text initializes
   every file in that set, avoiding a timestamp-based guess between files that
   were all added at once. The master is not used as the ongoing source of truth.
@@ -62,6 +70,9 @@ link/shortcut to an online Google document, not a local document copy.
   Android scoped storage does not give apps reliable access to arbitrary paths.
 - Selected document providers must grant read/write access and retain the URI
   permission for background jobs to synchronize successfully.
+- Opening a file in an external editor uses an optional Android “display over
+  other apps” permission to show a **Return to SyncAssist** button. The app
+  requests that special permission before launching the editor.
 
 ## Build
 

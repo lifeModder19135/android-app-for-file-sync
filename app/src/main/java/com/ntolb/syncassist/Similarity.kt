@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import kotlin.math.max
 import kotlin.math.min
@@ -138,15 +138,21 @@ object SimilarityCheck {
         contents: List<String>,
         settings: SimilaritySettings,
     ): SimilarityReport {
-        if (names.size < 2) return SimilarityReport(emptyList(), emptyList())
+        require(names.size == contents.size) { "Each filename must have matching file content." }
+        val nonEmptyIndices = contents.indices.filterNot { contents[it].isBlank() }
+        if (nonEmptyIndices.size < 2) return SimilarityReport(emptyList(), emptyList())
+        val checkedNames = nonEmptyIndices.map(names::get)
+        val checkedContents = nonEmptyIndices.map(contents::get)
         val nameIssues = if (settings.checkNames) {
-            flagOutliers(names) { i, j -> Similarity.name(names[i], names[j]) }
+            flagOutliers(checkedNames) { i, j -> Similarity.name(checkedNames[i], checkedNames[j]) }
                 .filter { it.score < Similarity.NAME_THRESHOLD }
         } else {
             emptyList()
         }
         val contentIssues = if (settings.checkContent) {
-            flagOutliers(names) { i, j -> Similarity.content(contents[i], contents[j]) }
+            flagOutliers(checkedNames) { i, j ->
+                Similarity.content(checkedContents[i], checkedContents[j])
+            }
                 .filter { it.score < Similarity.CONTENT_THRESHOLD }
         } else {
             emptyList()

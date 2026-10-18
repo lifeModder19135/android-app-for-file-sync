@@ -1,4 +1,4 @@
-package com.teches.filesync
+package com.ntolb.syncassist
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
