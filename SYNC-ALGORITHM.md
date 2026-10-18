@@ -33,6 +33,8 @@ Relevant implementation:
 1. In the set editor, **Add local files** opens Android's document picker with
    `ACTION_OPEN_DOCUMENT`, `CATEGORY_OPENABLE`, and multi-select enabled. The
    MIME request is `*/*`; the app does not rely on the picker to filter types.
+   The app starts the temporary **Return to SyncAssist** overlay before
+   opening the picker, so returning to the app does not depend on device Back.
 2. On return, a cancelled result, missing result data, or missing pending set
    causes the handler to stop without changing the set.
 3. The handler collects the selected URIs from `ClipData` (or the single
@@ -368,8 +370,10 @@ shows a non-focusable **Return to SyncAssist** overlay button. Pressing it
 brings the existing `MainActivity` task to the front, retaining the selected
 set screen, then removes the overlay. Resuming the app also stops the overlay.
 
-This permission is opt-in because Android requires explicit user approval.
-The overlay is only started around external-editor navigation; it is not
+The same overlay is shown over the Android document picker, providing a direct
+route back to the set editor even when emulator/device Back controls do not
+work. Android requires explicit approval for this special permission, which
+the app requests before opening either external screen. The overlay is not
 shown during normal app use. This is best-effort UI recovery and does not
 guarantee that an external editor will save a file or retain Android URI
 permissions.

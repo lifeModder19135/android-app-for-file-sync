@@ -32,16 +32,17 @@ class ReturnToAppOverlayService : Service() {
         if (returnButton != null) return START_NOT_STICKY
 
         val button = TextView(this).apply {
-            text = "Return to SyncAssist"
-            textSize = 14f
+            text = "SyncAssist · v${BuildConfig.VERSION_NAME}\nReturn to SyncAssist"
+            textSize = 13f
             setTextColor(Color.WHITE)
             setPadding(dp(14), dp(10), dp(14), dp(10))
+            gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 setColor(Color.rgb(55, 84, 145))
                 cornerRadius = dp(22).toFloat()
             }
             elevation = dp(8).toFloat()
-            contentDescription = "Return to SyncAssist"
+            contentDescription = "SyncAssist version ${BuildConfig.VERSION_NAME}. Return to SyncAssist."
             setOnClickListener {
                 startActivity(
                     Intent(this@ReturnToAppOverlayService, MainActivity::class.java).apply {

@@ -65,19 +65,22 @@ link/shortcut to an online Google document, not a local document copy.
   or uninterrupted background sync. On app launch, a catch-up sync runs if no
   unblocked all-set sync has completed yet or the last one was at least one interval ago.
   Similarity warnings wait until the user returns to the sets screen.
-- The set editor has both an in-app back control and device Back navigation.
-  Adding files opens Android's document picker; returning from it adds all
-  supported selected files to the set and confirms how many were added. Sets
-  can be deleted from the sets list; deletion removes only the set configuration,
-  not the underlying files.
+- The set editor has a visible **Home — sets** control; navigation does not
+  depend on the device Back button. Adding files opens Android's document
+  picker with a **Return to SyncAssist** overlay, then adds supported selected
+  files to the set and confirms how many were added. Sets can be deleted from
+  the sets list; deletion removes only the set configuration, not the files.
+- Each in-app screen and the external-screen return overlay shows the loaded
+  app version for quick identification during testing.
 - Files are selected with Android's Storage Access Framework. Access is stored
   as a persisted `content://` URI grant rather than a raw filesystem path;
   Android scoped storage does not give apps reliable access to arbitrary paths.
 - Selected document providers must grant read/write access and retain the URI
   permission for background jobs to synchronize successfully.
-- Opening a file in an external editor uses an optional Android “display over
-  other apps” permission to show a **Return to SyncAssist** button. The app
-  requests that special permission before launching the editor.
+- Opening a file in an external editor or opening Android's document picker
+  uses the Android “display over other apps” permission to show a **Return to
+  SyncAssist** button. The app requests that special permission before opening
+  an external screen.
 
 ## Build
 

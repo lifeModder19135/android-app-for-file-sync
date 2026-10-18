@@ -7,6 +7,10 @@ android {
     namespace = "com.ntolb.syncassist"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.ntolb.syncassist"
         minSdk = 26

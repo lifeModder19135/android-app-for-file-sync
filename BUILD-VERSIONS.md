@@ -17,3 +17,5 @@ development tasks that do not package an APK do not require a version bump.
 | 0.1.3 | 4 | 2026-10-18 | Renamed the Kotlin/Java package, Android namespace, and application ID to `com.ntolb.syncassist`. This installs as a separate Android app from earlier IDs and does not inherit their private app data. |
 | 0.1.4 | 5 | 2026-10-18 | Prevents ordinary activity resumes from triggering sync-all; returning from an external editor silently syncs only that set and does not enable paused sets. |
 | 0.1.5 | 6 | 2026-10-18 | Adds usable set navigation and confirmed deletion, confirms files added from Android's multi-select picker, catches up after a missed 15-minute sync interval, and defers mismatch warnings until the sets list is visible. |
+| 0.1.6 | 7 | 2026-10-18 | Adds a visible Home — sets control and extends the Return to SyncAssist overlay to Android's document picker so app navigation does not rely on emulator Back controls. |
+| 0.1.7 | 8 | 2026-10-18 | Adds the packaged app version tag to every in-app screen and the Return to SyncAssist overlay. |

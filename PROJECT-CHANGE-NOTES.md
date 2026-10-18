@@ -69,10 +69,13 @@ the behavior.
 - Opening a file requests Android's explicit “display over other apps”
   permission and, if granted, shows a temporary **Return to SyncAssist**
   overlay while the external editor is open.
-- Set-editing screens have visible and device-Back navigation to the sets
-  list. Android's document picker returns selected supported files directly to
-  the active set, with confirmation; sets can be deleted without deleting
-  their underlying documents.
+- Set-editing screens have an explicit **Home — sets** control that does not
+  depend on device Back. The **Return to SyncAssist** overlay is shown over
+  Android's document picker and external editors; sets can be deleted without
+  deleting their underlying documents, and picker selections are confirmed
+  when added.
+- Every in-app screen and the external-screen return overlay displays the
+  loaded app version to support emulator testing.
 - A scheduled all-set run with mismatch warnings does not advance the
   last-successful-sync time; the next app launch performs a foreground
   catch-up so its warning can be shown. Warnings are deferred until the sets

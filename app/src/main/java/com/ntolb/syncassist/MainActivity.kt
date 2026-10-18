@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private var state = AppState()
     private var currentSetId: String? = null
     private var pendingSetId: String? = null
+    private var pendingFilePickerSetId: String? = null
     private var pendingExternalFile: SyncFile? = null
     private var pendingExternalEdit: Pair<String, String>? = null
     private var awaitingOverlayPermission = false
@@ -63,10 +64,14 @@ class MainActivity : Activity() {
         if (awaitingOverlayPermission) {
             awaitingOverlayPermission = false
             val file = pendingExternalFile
+            val pickerSetId = pendingFilePickerSetId
             pendingExternalFile = null
-            if (Settings.canDrawOverlays(this) && file != null) {
-                launchExternalEditor(file)
-            } else if (file != null) {
+            pendingFilePickerSetId = null
+            if (Settings.canDrawOverlays(this)) {
+                if (file != null) launchExternalEditor(file)
+                if (pickerSetId != null) launchFilePicker(pickerSetId)
+            } else if (file != null || pickerSetId != null) {
+                pendingSetId = null
                 showError("Overlay permission is required to show the return-to-app button.")
             }
         }
@@ -118,6 +123,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderProfileChooser(root: LinearLayout) {
+        root.addView(versionTag())
         root.addView(title("File Sync"))
         root.addView(body("Create a local profile to start syncing text files."))
         state.profiles.forEach { profile ->
@@ -131,6 +137,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderSets(root: LinearLayout, profile: Profile) {
+        root.addView(versionTag())
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -181,7 +188,8 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(18), dp(20), dp(18))
         }
         setContentView(ScrollView(this).apply { addView(root) })
-        root.addView(actionButton("← Back to sets") {
+        root.addView(versionTag())
+        root.addView(actionButton("Home — sets") {
             currentSetId = null
             render()
         })
@@ -245,17 +253,31 @@ class MainActivity : Activity() {
         )
         root.addView(actionButton("Add local files") {
             pendingSetId = set.id
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
-                addFlags(
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
-                )
-                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            if (Settings.canDrawOverlays(this)) {
+                launchFilePicker(set.id)
+            } else {
+                pendingFilePickerSetId = set.id
+                AlertDialog.Builder(this)
+                    .setTitle("Enable return-to-app button")
+                    .setMessage(
+                        "Allow SyncAssist to display a Return to SyncAssist button over Android's " +
+                            "file picker. This provides a visible way back without the emulator Back control.",
+                    )
+                    .setNegativeButton("Cancel") { _, _ ->
+                        pendingFilePickerSetId = null
+                        pendingSetId = null
+                    }
+                    .setPositiveButton("Open settings") { _, _ ->
+                        awaitingOverlayPermission = true
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName"),
+                            ),
+                        )
+                    }
+                    .show()
             }
-            startActivityForResult(intent, REQUEST_FILES)
         })
         root.addView(
             actionButton(if (set.syncEnabled) "Sync this set now" else "Start syncing this set") {
@@ -518,6 +540,33 @@ class MainActivity : Activity() {
         launchExternalEditor(file)
     }
 
+    private fun launchFilePicker(setId: String) {
+        pendingSetId = setId
+        pendingFilePickerSetId = null
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            )
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
+        try {
+            startService(Intent(this, ReturnToAppOverlayService::class.java))
+            startActivityForResult(intent, REQUEST_FILES)
+        } catch (error: android.content.ActivityNotFoundException) {
+            pendingSetId = null
+            stopService(Intent(this, ReturnToAppOverlayService::class.java))
+            showError("No file picker is available on this device.")
+        } catch (error: SecurityException) {
+            pendingSetId = null
+            stopService(Intent(this, ReturnToAppOverlayService::class.java))
+            showError("Could not open the file picker: ${error.message}")
+        }
+    }
+
     private fun launchExternalEditor(file: SyncFile) {
         val intent = Intent(Intent.ACTION_EDIT).apply {
             setDataAndType(Uri.parse(file.location), mimeType(file.type))
@@ -748,6 +797,16 @@ class MainActivity : Activity() {
         this.text = text
         textSize = 16f
         setPadding(0, dp(8), 0, dp(12))
+    }
+
+    private fun versionTag() = TextView(this).apply {
+        text = "SyncAssist · v${BuildConfig.VERSION_NAME}"
+        textSize = 12f
+        setTypeface(null, android.graphics.Typeface.BOLD)
+        setTextColor(android.graphics.Color.rgb(52, 70, 110))
+        gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(4), dp(8), dp(8))
+        contentDescription = "SyncAssist version ${BuildConfig.VERSION_NAME}"
     }
 
     private fun actionButton(text: String, action: () -> Unit) = Button(this).apply {
