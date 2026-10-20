@@ -59,7 +59,7 @@ object CommentText {
                 if (it < 0) rawText.length else it
             }
             val isBlock = rawText.substring(lineStart, start).isBlank() &&
-                rawText.substring(commentEnd, lineEnd).isBlank()
+                rawText.substring(commentEnd, lineEnd).isBlank() 
 
             pending.add(
                 PendingComment(
