@@ -13,6 +13,8 @@ data class ObservedFile(
     val hash: String,
     val modifiedAt: Long,
     val baselineHash: String,
+    val originalContent: String = content,
+    val comments: List<FileComment> = emptyList(),
 )
 
 object SyncPolicy {
@@ -124,13 +126,23 @@ class LocalSyncEngine(
             val uri = Uri.parse(file.location)
             val input = resolver.openInputStream(uri)
                 ?: throw IOException("Could not read ${file.name}.")
-            val content = Utf8Text.read(input)
+            val originalContent = Utf8Text.read(input)
+            val parsed = try {
+                CommentText.parse(originalContent)
+            } catch (error: InvalidCommentMarkersException) {
+                throw IOException(
+                    "Invalid comment markers in ${file.name}: ${error.message}",
+                    error,
+                )
+            }
             ObservedFile(
                 index = index,
-                content = content,
-                hash = sha256(content),
+                content = parsed.syncText,
+                hash = sha256(parsed.syncText),
                 modifiedAt = modifiedAt(uri),
                 baselineHash = file.baselineHash,
+                originalContent = originalContent,
+                comments = parsed.comments,
             )
         }
 
@@ -148,7 +160,7 @@ class LocalSyncEngine(
             if (report.hasIssues) return SetOutcome(set, report)
             checkedSet = set.copy(similarityApproved = true)
         }
-        val before = observed.map { it.content }
+        val before = observed.map { it.originalContent }
 
         val initial = SyncPolicy.isInitialSync(observed)
         var master: ObservedFile? = null
@@ -179,12 +191,20 @@ class LocalSyncEngine(
     ): SyncSet {
         val needsWrite = set.files.indices.any { it != sourceIndex && observed[it].hash != source.hash }
         if (needsWrite) snapshot(profileId, set, before, "Before sync of \"${set.name}\"")
+        val after = observed.map { it.originalContent }.toMutableList()
         val updatedFiles = set.files.mapIndexed { index, file ->
-            if (index != sourceIndex && observed[index].hash != source.hash) overwrite(file, source.content)
+            if (index != sourceIndex && observed[index].hash != source.hash) {
+                val synchronizedContent = CommentText.preserveComments(
+                    source.content,
+                    observed[index].comments,
+                )
+                overwrite(file, synchronizedContent)
+                after[index] = synchronizedContent
+            }
             file.copy(baselineHash = source.hash)
         }
         if (needsWrite) {
-            snapshot(profileId, set, set.files.map { source.content }, "After sync of \"${set.name}\"")
+            snapshot(profileId, set, after, "After sync of \"${set.name}\"")
         }
         return set.copy(files = updatedFiles)
     }

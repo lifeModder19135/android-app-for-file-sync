@@ -129,23 +129,33 @@ For each file in set order, the engine:
 3. Decodes the complete stream as strict UTF-8. Malformed or unmappable byte
    sequences fail rather than being silently replaced. A UTF-8 BOM is retained
    as a character in the text.
-4. Computes SHA-256 over the decoded text re-encoded as UTF-8. The hash is used
-   to compare current text with the saved baseline; it is not a similarity
-   score.
-5. Queries the provider's `COLUMN_LAST_MODIFIED`. If a usable value is not
+4. Parses the private comment markers `!!!>` and `<!!!`. The markers and all
+   enclosed text are removed from sync text. Whitespace immediately around a
+   comment is represented in sync text by one newline if it contained a
+   newline, otherwise one space if it contained whitespace. Each comment
+   separately records the exact surrounding whitespace, the next
+   non-whitespace text as its anchor, and whether it occupies its own line. An
+   unmatched or nested marker is an `IOException` for the set. All files are
+   parsed before any write to that set occurs.
+5. Computes SHA-256 over the comment-free sync text re-encoded as UTF-8. The
+   hash is used to compare current text with the saved baseline; comment-only
+   edits do not make a file changed.
+6. Queries the provider's `COLUMN_LAST_MODIFIED`. If a usable value is not
    returned, it performs a display-name query and uses timestamp `0`; if that
    also yields nothing, it still uses `0`.
-6. Stores an observation containing the set index, text, current hash,
-   modification time, and saved baseline hash.
+7. Stores an observation containing the set index, original text, comment-free
+   sync text, comments and anchors, current hash, modification time, and saved
+   baseline hash.
 
 If reading any file fails, that set cannot continue through validation and
 source selection.
 
 ### 3. Classify empty files before similarity checking
 
-`content.isBlank()` defines empty: zero-length text and text consisting only
-of whitespace are empty. The engine removes these observations from the
-similarity-check inputs before running either check.
+The comment-free sync text's `isBlank()` defines empty: zero-length text,
+whitespace-only text, and text containing only comments are empty. The engine
+removes these observations from the similarity-check inputs before running
+either check.
 
 - **All files empty:** return for this set immediately. No similarity warning,
   master validation, overwrite, baseline update, or backup occurs. The blank
@@ -169,8 +179,9 @@ empty-file policy.
 ### 4. Decide whether to run similarity checks
 
 Similarity checking occurs only when at least two files have non-whitespace
-text and `similarityApproved` is false. It happens before master validation
-and before any backup or overwrite.
+comment-free text and `similarityApproved` is false. It happens before master
+validation and before any backup or overwrite. Comment text is not passed to
+the name/content similarity evaluator; names remain the actual filenames.
 
 `SimilarityCheck.evaluate()` also filters blank/whitespace-only content before
 comparing names or text. It requires exactly one content value per filename;
@@ -283,6 +294,8 @@ shown before any missing/empty-master error.
 - **Established set:** among non-empty files whose current hash differs from
   their saved baseline, choose the one with the greatest provider
   last-modified time.
+- A file's comments do not affect emptiness, change detection, or source
+  selection.
 - If changed-file timestamps tie, the greater set index wins, i.e. the later
   file in stored set order.
 - An unchanged file does not win merely because it has a newer timestamp.
@@ -310,12 +323,25 @@ hash:
 3. JGit initializes/opens one repository per profile, stages that set's
    directory, and commits only when its working tree is dirty.
 4. For each non-source file whose observed hash differs from the source hash,
-   open its URI for output in `"wt"` mode and write the source text as UTF-8.
-   A null output stream or thrown provider error fails the sync.
+   combine the source's comment-free sync text with the destination's own
+   comments, placed at their anchors, then open its URI for output in `"wt"`
+   mode and write the result as UTF-8. Comments in the source are not copied
+   into other files. A null output stream or thrown provider error fails the
+   sync.
 5. Set every file's baseline hash in saved state to the source hash, including
    the source and files that already matched it.
-6. If writes were needed, snapshot the resulting all-source-text contents as
-   an after-sync version.
+6. If writes were needed, snapshot the resulting contents, including each
+   destination's preserved comments, as an after-sync version.
+
+Each comment is anchored to the next non-whitespace text after its closing
+marker. Whitespace and newlines are skipped when locating that anchor. The
+destination's whitespace immediately before and after each comment is kept;
+the source's whitespace immediately before the anchor is replaced by that
+file-local spacing so it is not duplicated. Inline comments remain inline;
+comments that were alone on a line remain block comments, with a line added
+when needed. If the anchored text no longer occurs in the new content, the
+comment is retained at the end rather than discarded. No non-whitespace
+source text is replaced by a comment.
 
 If no write is needed, no before/after snapshot is requested, but baseline
 hashes are still advanced to the source hash. The `VersionBackup` catches
@@ -346,6 +372,8 @@ text was overwritten.
 - Expired read/write permissions are reported in the foreground or logged by
   the job service.
 - A failed pre-overwrite backup blocks that overwrite.
+- An unmatched or nested comment marker fails parsing before any file in the
+  set is overwritten.
 - Writes across multiple document providers are not transactional. If a write
   fails after earlier files were already written, the app does not roll those
   writes back. The pre-sync Git snapshot remains available, and a later run
@@ -404,6 +432,7 @@ behavior:
 
 Unit tests currently cover similarity scoring, outlier detection, empty-file
 source selection, changed-file/time ordering, UTF-8 BOM and malformed-input
-behavior, and Git snapshot history. They are JVM unit tests. Document-provider
+behavior, comment parsing/anchoring/preservation, and Git snapshot history.
+They are JVM unit tests. Document-provider
 reads/writes, Android scheduling behavior, and partial provider failures have
 not been integration-tested on a real device.

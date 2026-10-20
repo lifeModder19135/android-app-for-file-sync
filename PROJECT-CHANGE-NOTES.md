@@ -74,8 +74,13 @@ the behavior.
   Android's document picker and external editors; sets can be deleted without
   deleting their underlying documents, and picker selections are confirmed
   when added.
-- Every in-app screen and the external-screen return overlay displays the
-  loaded app version to support emulator testing.
+- A temporary, test-only app-version tag appears on in-app screens and the
+  external-screen return overlay. Remove it when replacing the scaffolding UI
+  for the finished product; it is not a permanent product requirement.
+- Files support local-only comment blocks delimited by `!!!>` and `<!!!`.
+  Comment text is excluded from similarity checks and sync hashes, and each
+  destination preserves its own comments anchored to following text. Invalid
+  unmatched or nested markers stop the sync before writes.
 - A scheduled all-set run with mismatch warnings does not advance the
   last-successful-sync time; the next app launch performs a foreground
   catch-up so its warning can be shown. Warnings are deferred until the sets

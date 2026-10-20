@@ -19,3 +19,4 @@ development tasks that do not package an APK do not require a version bump.
 | 0.1.5 | 6 | 2026-10-18 | Adds usable set navigation and confirmed deletion, confirms files added from Android's multi-select picker, catches up after a missed 15-minute sync interval, and defers mismatch warnings until the sets list is visible. |
 | 0.1.6 | 7 | 2026-10-18 | Adds a visible Home — sets control and extends the Return to SyncAssist overlay to Android's document picker so app navigation does not rely on emulator Back controls. |
 | 0.1.7 | 8 | 2026-10-18 | Adds the packaged app version tag to every in-app screen and the Return to SyncAssist overlay. |
+| 0.1.8 | 9 | 2026-10-19 | Adds per-file private comment blocks, excluded from sync checks and change detection and retained at their anchored positions when synchronized text is written. |

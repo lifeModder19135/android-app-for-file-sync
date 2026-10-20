@@ -30,6 +30,14 @@ link/shortcut to an online Google document, not a local document copy.
 - Files are decoded as strict UTF-8. Malformed UTF-8 is rejected instead of
   being silently replaced with different characters; a UTF-8 byte-order mark
   is preserved as part of the synchronized text.
+- Private per-file comments can be written as `!!!>comment text<!!!`. The
+  marked text is excluded from content checks, empty-file classification,
+  hashes, and synchronized text. For example, `text before !!!>my note<!!! text after`.
+  Each destination keeps its own comments anchored to the following
+  non-whitespace text; comments are never copied from the source file.
+  Surrounding whitespace is preserved in that destination, and an anchor that
+  no longer exists leaves the comment safely at the end. Unmatched or nested
+  markers stop the sync instead of risking an overwrite.
 - After initialization, when files differ from the saved baseline, the app
   uses the newest last-modified time reported by the document provider and
   writes that entire text to the other files in the set. This is
@@ -70,8 +78,9 @@ link/shortcut to an online Google document, not a local document copy.
   picker with a **Return to SyncAssist** overlay, then adds supported selected
   files to the set and confirms how many were added. Sets can be deleted from
   the sets list; deletion removes only the set configuration, not the files.
-- Each in-app screen and the external-screen return overlay shows the loaded
-  app version for quick identification during testing.
+- A temporary test-only version tag appears on in-app screens and the
+  external-screen return overlay for quick build identification. Remove it
+  when replacing the scaffolding UI for the finished product.
 - Files are selected with Android's Storage Access Framework. Access is stored
   as a persisted `content://` URI grant rather than a raw filesystem path;
   Android scoped storage does not give apps reliable access to arbitrary paths.

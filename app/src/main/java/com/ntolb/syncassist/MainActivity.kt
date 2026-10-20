@@ -195,6 +195,12 @@ class MainActivity : Activity() {
         })
         root.addView(title(set.name))
         root.addView(body("Local UTF-8 text files only: .txt, .md, .html, .py, .js, .java"))
+        root.addView(
+            body(
+                "Private comments: put text between !!!> and <!!!. Sync ignores the comment text " +
+                    "and keeps each file's comments with the text immediately following them.",
+            ),
+        )
         val initialSyncPending = set.files.none { it.baselineHash.isNotBlank() }
         val master = set.files.firstOrNull { it.location == set.masterFileLocation }
         if (initialSyncPending && set.files.size < 2) {
