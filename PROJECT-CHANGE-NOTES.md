@@ -81,6 +81,10 @@ the behavior.
   Comment text is excluded from similarity checks and sync hashes, and each
   destination preserves its own comments anchored to following text. Invalid
   unmatched or nested markers stop the sync before writes.
+- File history records each file when it is added to a set, at app startup, and
+  before and after sync overwrites. Set details provide confirmed actions to restore the
+  latest saved version different from the current content or the earliest
+  saved non-whitespace version; the current content is backed up before restore.
 - A scheduled all-set run with mismatch warnings does not advance the
   last-successful-sync time; the next app launch performs a foreground
   catch-up so its warning can be shown. Warnings are deferred until the sets

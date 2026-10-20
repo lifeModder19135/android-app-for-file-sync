@@ -26,6 +26,11 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
+    private enum class RestoreTarget {
+        LAST,
+        FIRST_TEXT,
+    }
+
     private lateinit var store: StateStore
     private val io = Executors.newSingleThreadExecutor()
     private var state = AppState()
@@ -47,6 +52,11 @@ class MainActivity : Activity() {
             state = store.load()
         } catch (error: Exception) {
             showError("Saved app data could not be loaded: ${error.message}")
+        }
+        state.profiles.forEach { profile ->
+            profile.sets.forEach { set ->
+                saveInitialVersions(profile.id, set.id, set.files)
+            }
         }
         scheduleSync()
         render()
@@ -238,6 +248,12 @@ class MainActivity : Activity() {
                     openFile(file)
                 },
             )
+            root.addView(actionButton("Revert to last version") {
+                confirmRestore(profile, set, file, RestoreTarget.LAST)
+            })
+            root.addView(actionButton("Revert to 1st version") {
+                confirmRestore(profile, set, file, RestoreTarget.FIRST_TEXT)
+            })
             root.addView(
                 actionButton("Remove ${file.name} from set") {
                     updateSet(
@@ -501,6 +517,7 @@ class MainActivity : Activity() {
             }
         }
         val merged = (set.files + additions).distinctBy { it.location }
+        val addedFiles = merged.filter { added -> set.files.none { it.location == added.location } }
         updateSet(
             profile,
             set.copy(
@@ -510,9 +527,108 @@ class MainActivity : Activity() {
         )
         val addedCount = merged.size - set.files.size
         if (addedCount > 0) {
+            saveInitialVersions(profile.id, set.id, addedFiles)
             Toast.makeText(this, "Added $addedCount file(s) to ${set.name}.", Toast.LENGTH_LONG).show()
         } else if (uris.isNotEmpty()) {
             Toast.makeText(this, "No new supported files were added.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun saveInitialVersions(profileId: String, setId: String, files: List<SyncFile>) {
+        io.execute {
+            val errors = mutableListOf<String>()
+            val backup = VersionBackup.forContext(this)
+            files.forEach { file ->
+                try {
+                    synchronized(StateStore.processLock) {
+                        val input = contentResolver.openInputStream(Uri.parse(file.location))
+                            ?: throw IOException("Could not read ${file.name}.")
+                        val content = Utf8Text.read(input)
+                        backup.snapshot(
+                            profileId,
+                            setId,
+                            listOf(BackupFile(file.name, file.location, content)),
+                            "Initial version of ${file.name}",
+                        )
+                    }
+                } catch (error: IOException) {
+                    errors.add("Could not save the first backup of ${file.name}: ${error.message}")
+                } catch (error: SecurityException) {
+                    errors.add("Could not save the first backup of ${file.name}: file access was denied.")
+                }
+            }
+            if (errors.isNotEmpty()) {
+                runOnUiThread { errors.forEach(::showError) }
+            }
+        }
+    }
+
+    private fun confirmRestore(
+        profile: Profile,
+        set: SyncSet,
+        file: SyncFile,
+        target: RestoreTarget,
+    ) {
+        val title = when (target) {
+            RestoreTarget.LAST -> "Revert to last version?"
+            RestoreTarget.FIRST_TEXT -> "Revert to 1st version?"
+        }
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage("This change is final! Are you sure you want to proceed?")
+            .setNegativeButton("Back", null)
+            .setPositiveButton("Proceed") { _, _ ->
+                restoreVersion(profile.id, set, file, target)
+            }
+            .show()
+    }
+
+    private fun restoreVersion(profileId: String, set: SyncSet, file: SyncFile, target: RestoreTarget) {
+        io.execute {
+            val outcome = try {
+                synchronized(StateStore.processLock) {
+                    val uri = Uri.parse(file.location)
+                    val input = contentResolver.openInputStream(uri)
+                        ?: throw IOException("Could not read ${file.name}.")
+                    val currentContent = Utf8Text.read(input)
+                    val backup = VersionBackup.forContext(this)
+                    val backupFile = BackupFile(file.name, file.location, currentContent)
+                    val restoredContent = when (target) {
+                        RestoreTarget.LAST -> backup.latestPreviousVersion(
+                            profileId,
+                            set.id,
+                            backupFile,
+                            currentContent,
+                        )
+                        RestoreTarget.FIRST_TEXT -> backup.firstTextVersion(profileId, set.id, backupFile)
+                    } ?: return@synchronized "No saved version is available for ${file.name}."
+
+                    backup.snapshot(
+                        profileId,
+                        set.id,
+                        listOf(backupFile),
+                        "Before reverting ${file.name}",
+                    )
+                    contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use {
+                        it.write(restoredContent)
+                    } ?: throw IOException("Could not write ${file.name}.")
+                    backup.snapshot(
+                        profileId,
+                        set.id,
+                        listOf(backupFile.copy(content = restoredContent)),
+                        "After reverting ${file.name}",
+                    )
+                    "Restored ${file.name} from its saved version."
+                }
+            } catch (error: IOException) {
+                "Could not restore ${file.name}: ${error.message ?: error.javaClass.simpleName}"
+            } catch (error: SecurityException) {
+                "Could not restore ${file.name}: file access was denied."
+            }
+            runOnUiThread {
+                Toast.makeText(this, outcome, Toast.LENGTH_LONG).show()
+                if (outcome.startsWith("Restored ")) refresh()
+            }
         }
     }
 

@@ -27,4 +27,37 @@ class VersionBackupTest {
             assertTrue(root.resolve("profile").walkTopDown().any { it.isFile && it.readText() == "three" })
         }
     }
+
+    @Test
+    fun findsPreviousAndFirstNonBlankFileVersions() {
+        val root = temp.newFolder("backups")
+        val backup = VersionBackup(root, temp.newFolder("home"))
+        val file = BackupFile("a.txt", "content://a", "   ")
+
+        backup.snapshot("profile", "set", listOf(file), "initial whitespace")
+        backup.snapshot("profile", "set", listOf(file.copy(content = "first text")), "first text")
+        backup.snapshot("profile", "set", listOf(file.copy(content = "second text")), "second text")
+
+        assertEquals(
+            "second text",
+            backup.latestPreviousVersion("profile", "set", file, "current text"),
+        )
+        assertEquals(
+            "first text",
+            backup.latestPreviousVersion("profile", "set", file, "second text"),
+        )
+        assertEquals("first text", backup.firstTextVersion("profile", "set", file))
+    }
+
+    @Test
+    fun returnsNoPreviousVersionWhenOnlyCurrentContentWasSaved() {
+        val root = temp.newFolder("backups")
+        val backup = VersionBackup(root, temp.newFolder("home"))
+        val file = BackupFile("a.txt", "content://a", "only version")
+
+        backup.snapshot("profile", "set", listOf(file), "only version")
+
+        assertEquals(null, backup.latestPreviousVersion("profile", "set", file, "only version"))
+        assertEquals(null, backup.firstTextVersion("profile", "set", BackupFile("b.txt", "content://b", "")))
+    }
 }

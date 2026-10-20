@@ -333,6 +333,15 @@ hash:
 6. If writes were needed, snapshot the resulting contents, including each
    destination's preserved comments, as an after-sync version.
 
+When files are added to a set, the app also records each file's current
+contents as its initial saved version. In the set detail view, restore actions
+select from that file's Git history: the last-version action chooses the
+newest saved contents different from the current contents, while the first
+version action chooses the oldest saved contents that are not whitespace-only.
+Both actions require explicit confirmation. Before restoring, the app saves
+the current file; after a successful write it saves the restored contents.
+Restore operations affect only the selected file.
+
 Each comment is anchored to the next non-whitespace text after its closing
 marker. Whitespace and newlines are skipped when locating that anchor. The
 destination's whitespace immediately before and after each comment is kept;

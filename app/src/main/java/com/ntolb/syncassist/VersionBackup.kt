@@ -2,6 +2,7 @@ package com.ntolb.syncassist
 
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.PersonIdent
+import org.eclipse.jgit.treewalk.TreeWalk
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -16,10 +17,7 @@ class VersionBackup(private val root: File, private val homeDir: File) {
     @Throws(IOException::class)
     fun snapshot(profileId: String, setId: String, files: List<BackupFile>, message: String) {
         synchronized(lock) {
-            try {
-                // JGit reads user.home for config lookup; Android does not define it.
-                System.setProperty("user.home", homeDir.absolutePath)
-                val dir = File(root, profileId).apply { mkdirs() }
+            withBackupRepository(profileId, create = true) { dir ->
                 val git = if (File(dir, ".git").exists()) Git.open(dir) else Git.init().setDirectory(dir).call()
                 git.use {
                     val setDir = File(dir, setId).apply { mkdirs() }
@@ -33,11 +31,55 @@ class VersionBackup(private val root: File, private val homeDir: File) {
                             .setSign(false).call()
                     }
                 }
-            } catch (error: IOException) {
-                throw error
-            } catch (error: Exception) {
-                throw IOException("Backup failed: ${error.message ?: error.javaClass.simpleName}", error)
             }
+        }
+    }
+
+    @Throws(IOException::class)
+    fun latestPreviousVersion(
+        profileId: String,
+        setId: String,
+        file: BackupFile,
+        currentContent: String,
+    ): String? = versions(profileId, setId, file)
+        .firstOrNull { it != currentContent }
+
+    @Throws(IOException::class)
+    fun firstTextVersion(profileId: String, setId: String, file: BackupFile): String? =
+        versions(profileId, setId, file).lastOrNull(String::isNotBlank)
+
+    private fun versions(profileId: String, setId: String, file: BackupFile): List<String> =
+        synchronized(lock) {
+            withBackupRepository(profileId, create = false) { dir ->
+                if (!File(dir, ".git").exists()) return@withBackupRepository emptyList()
+                Git.open(dir).use { git ->
+                    val path = "$setId/${backupName(file)}"
+                    git.log().addPath(path).call().map { commit ->
+                        val treeWalk = TreeWalk.forPath(git.repository, path, commit.tree)
+                            ?: throw IOException("Backup history is missing $path.")
+                        treeWalk.use {
+                            git.repository.open(it.getObjectId(0)).bytes.toString(Charsets.UTF_8)
+                        }
+                    }
+                }
+            }
+        }
+
+    private fun <T> withBackupRepository(
+        profileId: String,
+        create: Boolean,
+        action: (File) -> T,
+    ): T {
+        try {
+            // JGit reads user.home for config lookup; Android does not define it.
+            System.setProperty("user.home", homeDir.absolutePath)
+            val dir = File(root, profileId)
+            if (create) dir.mkdirs()
+            return action(dir)
+        } catch (error: IOException) {
+            throw error
+        } catch (error: Exception) {
+            throw IOException("Backup history operation failed: ${error.message ?: error.javaClass.simpleName}", error)
         }
     }
 

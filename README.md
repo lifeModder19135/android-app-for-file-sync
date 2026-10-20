@@ -63,11 +63,13 @@ link/shortcut to an online Google document, not a local document copy.
   cannot be the master, cannot win a sync, and are always filled from a file
   that has text. If every file in a set is empty, syncing pauses until one is
   written to, then the others are filled without any checks.
-- Every version of the synced files is kept: before and after any overwrite the
-  app commits the contents to a per-profile Git repository in app-private
-  storage (`files/backups/<profile id>`), using the bundled JGit library
-  because Android apps have no `git` command. History is not yet browsable in
-  the app.
+- Every version of the synced files is kept in a per-profile Git repository in
+  app-private storage (`files/backups/<profile id>`). The app records files
+  when they are first added, at app startup, and before and after sync
+  overwrites. In each set's detail view, **Revert to last version** restores the latest saved content
+  different from the current file, and **Revert to 1st version** restores the
+  earliest saved non-whitespace content. Both require confirmation, and the
+  current content is backed up before a restore.
 - The MVP schedules Android background work at the platform minimum periodic
   interval (15 minutes). Android may defer jobs; it does not promise instant
   or uninterrupted background sync. On app launch, a catch-up sync runs if no

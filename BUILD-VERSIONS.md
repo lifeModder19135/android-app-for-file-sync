@@ -20,3 +20,4 @@ development tasks that do not package an APK do not require a version bump.
 | 0.1.6 | 7 | 2026-10-18 | Adds a visible Home — sets control and extends the Return to SyncAssist overlay to Android's document picker so app navigation does not rely on emulator Back controls. |
 | 0.1.7 | 8 | 2026-10-18 | Adds the packaged app version tag to every in-app screen and the Return to SyncAssist overlay. |
 | 0.1.8 | 9 | 2026-10-19 | Adds per-file private comment blocks, excluded from sync checks and change detection and retained at their anchored positions when synchronized text is written. |
+| 0.1.9 | 10 | 2026-10-20 | Captures each file when added and adds confirmed per-file restore actions for the latest different and earliest non-whitespace saved versions. |
