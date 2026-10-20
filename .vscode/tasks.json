@@ -18,6 +18,21 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "label": "push",
+      "type": "process",
+      "command": "git",
+      "args": [
+        "push2"      
+      ],
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
     }
   ],
   "inputs": [
