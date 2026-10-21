@@ -30,7 +30,9 @@ link/shortcut to an online Google document, not a local document copy.
 - Files are decoded as strict UTF-8. Malformed UTF-8 is rejected instead of
   being silently replaced with different characters; a UTF-8 byte-order mark
   is preserved as part of the synchronized text.
-- Private per-file comments can be written as `!!!>comment text<!!!`. The
+- Private per-file comments can be written as `!!!>comment text<!!!` while
+  comments are enabled. When comments are disabled, markers and their contents
+  are synchronized as ordinary text. The
   marked text is excluded from content checks, empty-file classification,
   hashes, and synchronized text. For example, `text before !!!>my note<!!! text after`.
   Each destination keeps its own comments anchored to the following
@@ -58,7 +60,7 @@ link/shortcut to an online Google document, not a local document copy.
   text made only of common words matches only when its words are the same.
   If a check fails, the set is not synced and a warning offers "Sync anyway".
   Approval is remembered for the set. Both checks can be turned off in the
-  menu's Settings.
+  Settings view.
 - Empty (or whitespace-only) files skip the checks and are handled first: they
   cannot be the master, cannot win a sync, and are always filled from a file
   that has text. If every file in a set is empty, syncing pauses until one is
@@ -70,11 +72,28 @@ link/shortcut to an online Google document, not a local document copy.
   different from the current file, and **Revert to 1st version** restores the
   earliest saved non-whitespace content. Both require confirmation, and the
   current content is backed up before a restore.
-- The MVP schedules Android background work at the platform minimum periodic
-  interval (15 minutes). Android may defer jobs; it does not promise instant
-  or uninterrupted background sync. On app launch, a catch-up sync runs if no
-  unblocked all-set sync has completed yet or the last one was at least one interval ago.
-  Similarity warnings wait until the user returns to the sets screen.
+- The Settings view controls the sync pattern: **Aggressive** uses Android's
+  periodic background jobs, **Lazy** checks while the app is open,
+  **Inattentive** checks while it is open and focused, and **Stubborn** only
+  syncs on manual request. The default is Aggressive. Android enforces a
+  15-minute minimum periodic background interval and may defer jobs; it cannot
+  guarantee instant or uninterrupted work. Shorter custom conflict-retry
+  intervals use one-shot jobs and may also be deferred by Android. Since all
+  sets in this MVP use local files, background checks can run without a network
+  connection; remote-set connectivity constraints are not implemented yet.
+- A similarity conflict can either pause that set until manually started or
+  schedule a retry after the selected interval. The Settings view also
+  controls whether a detected background conflict attempts to bring the app
+  forward. Android may prevent background apps from opening an activity.
+- Sync notifications can be enabled independently for automatic syncs, manual
+  single-set syncs, and manual all-set syncs. Toast, vibration, and sound
+  delivery methods are independently selectable. Set-created and established-
+  set file-added change notifications have separate switches and delivery
+  methods; change notifications default off, while sync notifications default
+  on. The theme control is a placeholder and does not change the current UI.
+- Settings are stored in `files/sets.json`; existing installs receive
+  backward-compatible defaults. Similarity warnings wait until the user
+  returns to the sets screen.
 - The set editor has a visible **Home — sets** control; navigation does not
   depend on the device Back button. Adding files opens Android's document
   picker with a **Return to SyncAssist** overlay, then adds supported selected

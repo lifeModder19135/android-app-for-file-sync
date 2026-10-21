@@ -14,6 +14,40 @@ data class SyncSet(
     val masterFileLocation: String? = null,
     val similarityApproved: Boolean = false,
     val syncEnabled: Boolean = true,
+    val conflictRetryAt: Long? = null,
+)
+
+enum class SyncPattern {
+    AGGRESSIVE,
+    LAZY,
+    INATTENTIVE,
+    STUBBORN,
+}
+
+enum class ConflictResolution {
+    PAUSE,
+    RETRY,
+}
+
+data class AppSettings(
+    val syncPattern: SyncPattern = SyncPattern.AGGRESSIVE,
+    val conflictResolution: ConflictResolution = ConflictResolution.PAUSE,
+    val syncIntervalMinutes: Long = 15,
+    val conflictRetryMinutes: Long = 15,
+    val gainFocusOnConflict: Boolean = false,
+    val commentsEnabled: Boolean = true,
+    val autoSyncNotifications: Boolean = true,
+    val singleSetSyncNotifications: Boolean = true,
+    val allSetsSyncNotifications: Boolean = true,
+    val syncToast: Boolean = true,
+    val syncVibration: Boolean = false,
+    val syncSound: Boolean = false,
+    val setCreatedNotifications: Boolean = false,
+    val fileAddedNotifications: Boolean = false,
+    val changeToast: Boolean = false,
+    val changeVibration: Boolean = false,
+    val changeSound: Boolean = false,
+    val theme: String = "Default",
 )
 
 data class SimilaritySettings(
@@ -40,4 +74,5 @@ data class AppState(
     val profiles: List<Profile> = emptyList(),
     val activeProfileId: String? = null,
     val similarity: SimilaritySettings = SimilaritySettings(),
+    val settings: AppSettings = AppSettings(),
 )

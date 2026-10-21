@@ -9,13 +9,20 @@ object SyncRunTracker {
     private const val PREFERENCES_NAME = "sync_schedule"
     private const val LAST_SYNC_AT_KEY = "last_sync_at"
 
-    fun shouldCatchUp(lastSyncAt: Long, now: Long): Boolean =
-        lastSyncAt <= 0L || now - lastSyncAt >= SYNC_INTERVAL_MS
+    fun shouldCatchUp(
+        lastSyncAt: Long,
+        now: Long,
+        intervalMillis: Long = SYNC_INTERVAL_MS,
+    ): Boolean = lastSyncAt <= 0L || now - lastSyncAt >= intervalMillis
 
-    fun shouldCatchUp(context: Context, now: Long = System.currentTimeMillis()): Boolean {
+    fun shouldCatchUp(
+        context: Context,
+        now: Long = System.currentTimeMillis(),
+        intervalMillis: Long = SYNC_INTERVAL_MS,
+    ): Boolean {
         val lastSyncAt = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getLong(LAST_SYNC_AT_KEY, 0L)
-        return shouldCatchUp(lastSyncAt, now)
+        return shouldCatchUp(lastSyncAt, now, intervalMillis)
     }
 
     @Throws(IOException::class)

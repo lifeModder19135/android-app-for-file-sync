@@ -75,19 +75,32 @@ Sync runs from these entry points:
    **Sync this set now** buttons enable the relevant sets and start a sync with
    a completion or failure toast.
 2. `MainActivity.onCreate()` schedules a persisted Android `JobScheduler` job
-   at a fixed 15-minute periodic interval. Android can defer jobs. The job
-   service calls the same sync engine across all saved profiles and sets.
-3. At app launch, `MainActivity` checks the timestamp of the last completed,
-   unblocked all-set sync. It immediately starts a catch-up sync if none has
-   completed or at least one 15-minute interval has elapsed since it
-   completed. Scheduled jobs and foreground sync-all runs record this
-   timestamp only when no set was blocked; a targeted one-set sync does not.
-   This ensures a background similarity warning is surfaced by a foreground
-   catch-up run rather than being silently lost.
+   when the **Aggressive** pattern is selected. Its configured interval is at
+   least 15 minutes because that is Android's minimum periodic interval.
+   Android may defer jobs. The job service calls the same sync engine across
+   all saved profiles and sets.
+3. Under **Aggressive**, app launch checks whether the configured interval has
+   elapsed since the last all-set check and starts a catch-up check if needed.
+   **Lazy** checks on app open and repeats while the activity remains open;
+   **Inattentive** does the same only while the activity has window focus;
+   **Stubborn** never starts a check automatically. Manual sync actions remain
+   available for every pattern.
+4. **Stop syncing until manually started** disables a set when similarity
+   checks block it. **Retry after the selected interval** keeps it enabled,
+   stores its next retry time, and schedules an individual one-shot background
+   job under Aggressive. Foreground checks also respect that retry time.
+   Manual sync explicitly bypasses the wait. Android may defer one-shot jobs.
+5. The **Enable private comments** setting controls parsing: when enabled,
+   comments are excluded from similarity and hashes and retained per file;
+   when disabled, marker text is ordinary synchronized content.
 
-Ordinary activity resumes—including returning from the file picker—do not
-start a sync. Newly created sets therefore remain uninspected while the user is
-adding files and preparing the set, until a manual sync action enables them.
+Returning from the file picker does not itself start a sync. Newly created sets
+therefore remain uninspected while the user is adding files and preparing the
+set, until a manual sync action enables them. Automatic sync completion and
+change notifications use the independently configured toast, vibration, and
+sound delivery methods. Change events currently cover set creation and adding
+files to a set that has completed its initial sync; setup additions to a new
+set are not reported as a change event.
 The engine also skips any set with fewer than two stored files before reading
 file contents or running similarity checks.
 

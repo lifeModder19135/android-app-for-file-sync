@@ -7,6 +7,16 @@ import org.junit.Test
 
 class CommentTextTest {
     @Test
+    fun disabledCommentsAreTreatedAsOrdinaryText() {
+        val raw = "before !!!>private note<!!! after"
+
+        val parsed = CommentText.parse(raw, enabled = false)
+
+        assertEquals(raw, parsed.syncText)
+        assertTrue(parsed.comments.isEmpty())
+    }
+
+    @Test
     fun removesCommentContentsButKeepsSurroundingWhitespaceInSyncText() {
         val parsed = CommentText.parse("before \n!!!>private note<!!!\n after")
 

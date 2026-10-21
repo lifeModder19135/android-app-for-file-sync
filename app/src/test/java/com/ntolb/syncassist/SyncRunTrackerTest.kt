@@ -27,4 +27,25 @@ class SyncRunTrackerTest {
             ),
         )
     }
+
+    @Test
+    fun catchUpUsesTheConfiguredInterval() {
+        val lastSyncAt = 1000L
+        val configuredInterval = 30 * 60 * 1000L
+
+        assertFalse(
+            SyncRunTracker.shouldCatchUp(
+                lastSyncAt,
+                lastSyncAt + configuredInterval - 1,
+                configuredInterval,
+            ),
+        )
+        assertTrue(
+            SyncRunTracker.shouldCatchUp(
+                lastSyncAt,
+                lastSyncAt + configuredInterval,
+                configuredInterval,
+            ),
+        )
+    }
 }

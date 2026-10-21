@@ -21,6 +21,9 @@ object CommentText {
     const val END_MARKER = "<!!!"
     private const val CONTEXT_LENGTH = 48
 
+    fun parse(rawText: String, enabled: Boolean): ParsedFileText =
+        if (enabled) parse(rawText) else ParsedFileText(rawText, emptyList())
+
     fun parse(rawText: String): ParsedFileText {
         val visible = StringBuilder()
         val pending = mutableListOf<PendingComment>()

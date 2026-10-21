@@ -50,11 +50,21 @@ object SyncPolicy {
     }
 }
 
-data class BlockedSet(val profileId: String, val setId: String, val setName: String, val report: SimilarityReport)
+data class BlockedSet(
+    val profileId: String,
+    val setId: String,
+    val setName: String,
+    val report: SimilarityReport,
+    val retryAt: Long? = null,
+)
 
 data class SyncResult(val updatedSets: Int, val blocked: List<BlockedSet>)
 
-private data class SetOutcome(val set: SyncSet, val report: SimilarityReport? = null)
+private data class SetOutcome(
+    val set: SyncSet,
+    val report: SimilarityReport? = null,
+    val synced: Boolean = false,
+)
 
 class LocalSyncEngine(
     private val resolver: ContentResolver,
@@ -62,24 +72,25 @@ class LocalSyncEngine(
     private val backup: VersionBackup? = null,
 ) {
     @Throws(IOException::class)
-    fun syncAll(): SyncResult = synchronized(StateStore.processLock) {
-        sync(store.load())
+    fun syncAll(force: Boolean = false): SyncResult = synchronized(StateStore.processLock) {
+        sync(store.load(), force = force)
     }
 
     @Throws(IOException::class)
-    fun syncSet(profileId: String, setId: String): SyncResult = synchronized(StateStore.processLock) {
+    fun syncSet(profileId: String, setId: String, force: Boolean = false): SyncResult = synchronized(StateStore.processLock) {
         val state = store.load()
         val profile = state.profiles.firstOrNull { it.id == profileId }
             ?: throw IOException("Profile \"$profileId\" was not found.")
         profile.sets.firstOrNull { it.id == setId }
             ?: throw IOException("Set \"$setId\" was not found.")
-        sync(state, profileId, setId)
+        sync(state, profileId, setId, force)
     }
 
     private fun sync(
         state: AppState,
         targetProfileId: String? = null,
         targetSetId: String? = null,
+        force: Boolean = false,
     ): SyncResult {
         var synchronizedSets = 0
         val blocked = mutableListOf<BlockedSet>()
@@ -89,9 +100,17 @@ class LocalSyncEngine(
                     val isTarget = targetSetId == null ||
                         (profile.id == targetProfileId && set.id == targetSetId)
                     if (!isTarget || !set.syncEnabled) return@map set
-                    val outcome = syncSet(profile.id, set, state.similarity)
-                    outcome.report?.let { blocked.add(BlockedSet(profile.id, set.id, set.name, it)) }
-                    if (outcome.set != set) synchronizedSets++
+                    if (!force && state.settings.conflictResolution == ConflictResolution.RETRY &&
+                        SyncSettingsPolicy.shouldDeferConflictRetry(
+                            set.conflictRetryAt,
+                            System.currentTimeMillis(),
+                        )
+                    ) return@map set
+                    val outcome = syncSet(profile.id, set, state.similarity, state.settings)
+                    outcome.report?.let {
+                        blocked.add(BlockedSet(profile.id, set.id, set.name, it, outcome.set.conflictRetryAt))
+                    }
+                    if (outcome.synced) synchronizedSets++
                     outcome.set
                 },
             )
@@ -119,7 +138,12 @@ class LocalSyncEngine(
         )
     }
 
-    private fun syncSet(profileId: String, set: SyncSet, settings: SimilaritySettings): SetOutcome {
+    private fun syncSet(
+        profileId: String,
+        set: SyncSet,
+        similaritySettings: SimilaritySettings,
+        appSettings: AppSettings,
+    ): SetOutcome {
         if (set.files.size < 2) return SetOutcome(set)
 
         val observed = set.files.mapIndexed { index, file ->
@@ -128,7 +152,7 @@ class LocalSyncEngine(
                 ?: throw IOException("Could not read ${file.name}.")
             val originalContent = Utf8Text.read(input)
             val parsed = try {
-                CommentText.parse(originalContent)
+                CommentText.parse(originalContent, appSettings.commentsEnabled)
             } catch (error: InvalidCommentMarkersException) {
                 throw IOException(
                     "Invalid comment markers in ${file.name}: ${error.message}",
@@ -155,9 +179,18 @@ class LocalSyncEngine(
             val report = SimilarityCheck.evaluate(
                 filled.map { set.files[it.index].name },
                 filled.map { it.content },
-                settings,
+                similaritySettings,
             )
-            if (report.hasIssues) return SetOutcome(set, report)
+            if (report.hasIssues) {
+                val updatedSet = when (appSettings.conflictResolution) {
+                    ConflictResolution.PAUSE -> set.copy(syncEnabled = false, conflictRetryAt = null)
+                    ConflictResolution.RETRY -> set.copy(
+                        conflictRetryAt = System.currentTimeMillis() +
+                            appSettings.conflictRetryMinutes.coerceAtLeast(1) * 60_000L,
+                    )
+                }
+                return SetOutcome(updatedSet, report)
+            }
             checkedSet = set.copy(similarityApproved = true)
         }
         val before = observed.map { it.originalContent }
@@ -178,7 +211,10 @@ class LocalSyncEngine(
         }
 
         val source = SyncPolicy.chooseSource(observed, master, initial) ?: return SetOutcome(checkedSet)
-        return SetOutcome(propagate(profileId, checkedSet, observed, before, source.index, source))
+        return SetOutcome(
+            propagate(profileId, checkedSet.copy(conflictRetryAt = null), observed, before, source.index, source),
+            synced = true,
+        )
     }
 
     private fun propagate(

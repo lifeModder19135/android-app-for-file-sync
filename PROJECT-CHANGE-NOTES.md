@@ -85,6 +85,11 @@ the behavior.
   before and after sync overwrites. Set details provide confirmed actions to restore the
   latest saved version different from the current content or the earliest
   saved non-whitespace version; the current content is backed up before restore.
+- Version 0.2.0 adds a persisted Settings view for sync pattern and interval,
+  conflict pause/retry behavior and retry intervals, foreground-on-conflict,
+  comment handling, sync/change notification preferences, and a theme
+  placeholder. Sync and change notifications independently support toast,
+  vibration, and sound.
 - A scheduled all-set run with mismatch warnings does not advance the
   last-successful-sync time; the next app launch performs a foreground
   catch-up so its warning can be shown. Warnings are deferred until the sets

@@ -21,3 +21,4 @@ development tasks that do not package an APK do not require a version bump.
 | 0.1.7 | 8 | 2026-10-18 | Adds the packaged app version tag to every in-app screen and the Return to SyncAssist overlay. |
 | 0.1.8 | 9 | 2026-10-19 | Adds per-file private comment blocks, excluded from sync checks and change detection and retained at their anchored positions when synchronized text is written. |
 | 0.1.9 | 10 | 2026-10-20 | Captures each file when added and adds confirmed per-file restore actions for the latest different and earliest non-whitespace saved versions. |
+| 0.2.0 | 11 | 2026-10-20 | Adds persisted settings for sync patterns and intervals, conflict handling, comments, configurable sync/change notifications, and a future-theme placeholder. |

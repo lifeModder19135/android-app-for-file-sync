@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Patterns
+import android.widget.ArrayAdapter
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -19,8 +20,12 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.ScrollView
+import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import android.os.Handler
+import android.os.Looper
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -42,6 +47,18 @@ class MainActivity : Activity() {
     private var awaitingOverlayPermission = false
     private val pendingBlocked = mutableListOf<BlockedSet>()
     private var warningShowing = false
+    private var showingSettings = false
+    private var hasWindowFocus = false
+    private val foregroundHandler = Handler(Looper.getMainLooper())
+    private val foregroundSync = object : Runnable {
+        override fun run() {
+            val pattern = state.settings.syncPattern
+            val shouldRun = SyncSettingsPolicy.shouldRunWhileForeground(pattern, hasWindowFocus)
+            if (!shouldRun || isFinishing) return
+            runSync(showResult = false)
+            foregroundHandler.postDelayed(this, state.settings.syncIntervalMinutes * 60_000L)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,17 +77,29 @@ class MainActivity : Activity() {
         }
         scheduleSync()
         render()
-        if (SyncRunTracker.shouldCatchUp(this)) runSync(showResult = false)
+        showConflictLaunchMessage(intent)
+        val interval = state.settings.syncIntervalMinutes * 60_000L
+        if (SyncSettingsPolicy.shouldScheduleBackground(state.settings.syncPattern) &&
+            SyncRunTracker.shouldCatchUp(this, intervalMillis = interval)
+        ) {
+            runSync(showResult = false)
+        }
     }
 
     override fun onResume() {
         super.onResume()
         ReturnToAppOverlayService.stop(this)
         val externalEdit = pendingExternalEdit
-        pendingExternalEdit = null
-        if (::store.isInitialized && externalEdit != null) {
+        val canSyncAfterEdit = state.settings.syncPattern == SyncPattern.AGGRESSIVE ||
+            state.settings.syncPattern == SyncPattern.LAZY ||
+            (state.settings.syncPattern == SyncPattern.INATTENTIVE && hasWindowFocus)
+        if (externalEdit != null && canSyncAfterEdit) {
+            pendingExternalEdit = null
             runSync(showResult = false, profileId = externalEdit.first, setId = externalEdit.second)
+        } else if (state.settings.syncPattern != SyncPattern.INATTENTIVE) {
+            pendingExternalEdit = null
         }
+        scheduleForegroundSync(runImmediately = externalEdit == null)
         if (awaitingOverlayPermission) {
             awaitingOverlayPermission = false
             val file = pendingExternalFile
@@ -87,15 +116,51 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onPause() {
+        foregroundHandler.removeCallbacks(foregroundSync)
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        hasWindowFocus = hasFocus
+        if (state.settings.syncPattern == SyncPattern.INATTENTIVE && hasFocus && !isFinishing) {
+            val externalEdit = pendingExternalEdit
+            if (externalEdit != null) {
+                pendingExternalEdit = null
+                runSync(showResult = false, profileId = externalEdit.first, setId = externalEdit.second)
+                scheduleForegroundSync(runImmediately = false)
+            } else {
+                scheduleForegroundSync(runImmediately = true)
+            }
+        } else if (state.settings.syncPattern != SyncPattern.LAZY && !hasFocus) {
+            foregroundHandler.removeCallbacks(foregroundSync)
+        }
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_CURRENT_SET_ID, currentSetId)
         outState.putString(STATE_PENDING_SET_ID, pendingSetId)
         super.onSaveInstanceState(outState)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        try {
+            synchronized(StateStore.processLock) { state = store.load() }
+        } catch (error: Exception) {
+            showError("Saved app data could not be loaded: ${error.message}")
+        }
+        showConflictLaunchMessage(intent)
+    }
+
     @Deprecated("Use OnBackPressedDispatcher for production builds.")
     override fun onBackPressed() {
-        if (currentSetId != null) {
+        if (showingSettings) {
+            showingSettings = false
+            render()
+        } else if (currentSetId != null) {
             currentSetId = null
             render()
         } else {
@@ -104,6 +169,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        foregroundHandler.removeCallbacks(foregroundSync)
         io.shutdown()
         super.onDestroy()
     }
@@ -117,7 +183,9 @@ class MainActivity : Activity() {
         setContentView(root)
 
         val activeProfile = state.profiles.firstOrNull { it.id == state.activeProfileId }
-        if (activeProfile == null) {
+        if (showingSettings && activeProfile != null) {
+            renderSettings(root)
+        } else if (activeProfile == null) {
             renderProfileChooser(root)
         } else if (currentSetId != null) {
             val set = activeProfile.sets.firstOrNull { it.id == currentSetId }
@@ -381,6 +449,12 @@ class MainActivity : Activity() {
                                 sets = profile.sets + set,
                             ),
                         )
+                        AppNotifier.change(
+                            this,
+                            state.settings,
+                            ChangeNotificationKind.SET_CREATED,
+                            "Set \"$name\" created.",
+                        )
                         dialog.dismiss()
                     }
                 }
@@ -499,6 +573,7 @@ class MainActivity : Activity() {
         }.distinct()
         val profile = activeProfile() ?: return
         val set = profile.sets.firstOrNull { it.id == setId } ?: return
+        val wasEstablishedSet = set.files.any { it.baselineHash.isNotBlank() }
         val additions = mutableListOf<SyncFile>()
         for (uri in uris) {
             val name = displayName(uri) ?: uri.lastPathSegment ?: "file"
@@ -528,7 +603,20 @@ class MainActivity : Activity() {
         val addedCount = merged.size - set.files.size
         if (addedCount > 0) {
             saveInitialVersions(profile.id, set.id, addedFiles)
-            Toast.makeText(this, "Added $addedCount file(s) to ${set.name}.", Toast.LENGTH_LONG).show()
+            val addedMessage = "Added $addedCount file(s) to ${set.name}."
+            val changeToastWillNotify = wasEstablishedSet &&
+                state.settings.fileAddedNotifications && state.settings.changeToast
+            if (!changeToastWillNotify) {
+                Toast.makeText(this, addedMessage, Toast.LENGTH_LONG).show()
+            }
+            if (wasEstablishedSet) {
+                AppNotifier.change(
+                    this,
+                    state.settings,
+                    ChangeNotificationKind.FILE_ADDED,
+                    addedMessage,
+                )
+            }
         } else if (uris.isNotEmpty()) {
             Toast.makeText(this, "No new supported files were added.", Toast.LENGTH_LONG).show()
         }
@@ -747,25 +835,34 @@ class MainActivity : Activity() {
             }
         }
         io.execute {
-            var shouldNotify = showResult
             var blocked = emptyList<BlockedSet>()
+            val kind = if (!showResult) {
+                SyncNotificationKind.AUTOMATIC
+            } else if (profileId != null && setId != null) {
+                SyncNotificationKind.SINGLE_SET
+            } else {
+                SyncNotificationKind.ALL_SETS
+            }
             val outcome = try {
                 val engine = LocalSyncEngine(contentResolver, store, VersionBackup.forContext(this))
                 val result = if (profileId != null && setId != null) {
-                    engine.syncSet(profileId, setId)
+                    engine.syncSet(profileId, setId, force = showResult)
                 } else {
-                    engine.syncAll()
+                    engine.syncAll(force = showResult)
                 }
                 blocked = result.blocked
-                if ((profileId == null || setId == null) && blocked.isEmpty()) {
+                if (state.settings.syncPattern == SyncPattern.AGGRESSIVE) {
+                    blocked.forEach { item ->
+                        item.retryAt?.let { LocalSyncJobService.scheduleRetry(this, item, it) }
+                    }
+                }
+                if (profileId == null || setId == null) {
                     SyncRunTracker.record(this)
                 }
                 "Sync complete. Updated ${result.updatedSets} set(s)."
             } catch (error: IOException) {
-                shouldNotify = true
                 "Sync failed: ${error.message ?: error.javaClass.simpleName}"
             } catch (error: SecurityException) {
-                shouldNotify = true
                 "Sync failed because access to a selected file expired."
             }
             runOnUiThread {
@@ -775,8 +872,17 @@ class MainActivity : Activity() {
                 } catch (error: Exception) {
                     showError("Saved app data could not be loaded: ${error.message}")
                 }
-                if (shouldNotify) Toast.makeText(this, outcome, Toast.LENGTH_LONG).show()
-                if (shouldNotify || blocked.isNotEmpty()) refresh()
+                AppNotifier.sync(this, state.settings, kind, outcome)
+                if (showResult || blocked.isNotEmpty()) refresh()
+                if (state.settings.syncPattern != SyncPattern.AGGRESSIVE) {
+                    val nextRetryAt = blocked.mapNotNull { it.retryAt }.minOrNull()
+                    if (nextRetryAt != null) {
+                        scheduleForegroundSync(
+                            runImmediately = false,
+                            delayMillis = (nextRetryAt - System.currentTimeMillis()).coerceAtLeast(0L),
+                        )
+                    }
+                }
                 enqueueBlockedWarnings(blocked)
             }
         }
@@ -792,7 +898,7 @@ class MainActivity : Activity() {
     }
 
     private fun showNextBlockedWarning() {
-        if (warningShowing || isFinishing || currentSetId != null || activeProfile() == null) return
+        if (warningShowing || isFinishing || showingSettings || currentSetId != null || activeProfile() == null) return
         while (pendingBlocked.isNotEmpty()) {
             val candidate = pendingBlocked.removeAt(0)
             val setStillExists = state.profiles.any { profile ->
@@ -815,12 +921,17 @@ class MainActivity : Activity() {
                 add("• Content: \"${it.fileName}\" shares only ${percent(it.score)} of its text with its closest match \"${it.bestMatchName}\" (needs ${percent(Similarity.CONTENT_THRESHOLD)}).")
             }
         }
+        val conflictResolutionMessage = when (state.settings.conflictResolution) {
+            ConflictResolution.PAUSE -> "Syncing is paused for this set until you start it again."
+            ConflictResolution.RETRY ->
+                "The app will check this set again after ${formatMinutes(state.settings.conflictRetryMinutes)}."
+        }
         AlertDialog.Builder(this)
             .setTitle("These files may not belong together")
             .setMessage(
                 "Set \"${next.setName}\" was not synced.\n\n${lines.joinToString("\n")}\n\n" +
-                    "Syncing overwrites files with the newest version. Every version is saved in the backup history, " +
-                    "and you won't be asked again for this set unless you add more files.",
+                    "Syncing overwrites files with the newest version. Every version is saved in the backup history.\n\n" +
+                    conflictResolutionMessage,
             )
             .setPositiveButton("Sync anyway") { _, _ ->
                 warningShowing = false
@@ -848,31 +959,256 @@ class MainActivity : Activity() {
     private fun percent(score: Double) = "${(score * 100).toInt()}%"
 
     private fun showSettings() {
-        val checks = booleanArrayOf(state.similarity.checkNames, state.similarity.checkContent)
-        AlertDialog.Builder(this)
-            .setTitle("Settings")
-            .setMultiChoiceItems(
-                arrayOf(
-                    "Warn when file names don't look alike",
-                    "Warn when file contents don't look alike",
-                ),
-                checks,
-            ) { _, which, checked -> checks[which] = checked }
-            .setPositiveButton("Save") { _, _ ->
-                updateState(state.copy(similarity = SimilaritySettings(checks[0], checks[1])))
+        showingSettings = true
+        render()
+    }
+
+    private fun renderSettings(root: LinearLayout) {
+        root.addView(versionTag())
+        root.addView(actionButton("Home — sets") {
+            showingSettings = false
+            render()
+        })
+        root.addView(title("Settings"))
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(
+            ScrollView(this).apply { addView(content) },
+            LinearLayout.LayoutParams(-1, 0, 1f),
+        )
+
+        val settings = state.settings
+        content.addView(title("General"))
+        content.addView(body("Sync behavior and conflict handling"))
+        val pattern = spinner(
+            listOf(
+                "Aggressive — background checks while Android allows",
+                "Lazy — check while the app is open",
+                "Inattentive — check while the app is open and focused",
+                "Stubborn — sync only when manually requested",
+            ),
+            settings.syncPattern.ordinal,
+        )
+        content.addView(body("Sync pattern"))
+        content.addView(pattern)
+
+        val conflictResolution = spinner(
+            listOf(
+                "Stop syncing until manually started",
+                "Retry after the selected interval",
+            ),
+            if (settings.conflictResolution == ConflictResolution.PAUSE) 0 else 1,
+        )
+        content.addView(body("Resolution mode"))
+        content.addView(conflictResolution)
+
+        val syncInterval = intervalControl(
+            content,
+            "Sync interval",
+            settings.syncIntervalMinutes,
+            SYNC_INTERVAL_PRESETS,
+            15,
+        )
+        content.addView(body("Android background periodic jobs cannot run more frequently than every 15 minutes."))
+        val conflictInterval = intervalControl(
+            content,
+            "Conflict retry interval",
+            settings.conflictRetryMinutes,
+            CONFLICT_INTERVAL_PRESETS,
+            1,
+        )
+        val gainFocus = settingSwitch(content, "Bring the app to the foreground on conflict", settings.gainFocusOnConflict)
+        content.addView(body("Android may prevent the app from opening automatically while it is in the background."))
+        val comments = settingSwitch(content, "Enable private comments", settings.commentsEnabled)
+
+        content.addView(title("Sync notifications"))
+        val automaticSync = settingSwitch(content, "Automatic syncs", settings.autoSyncNotifications)
+        val singleSync = settingSwitch(content, "Manual single-set syncs", settings.singleSetSyncNotifications)
+        val allSync = settingSwitch(content, "Manual all-sets syncs", settings.allSetsSyncNotifications)
+        content.addView(body("Delivery methods"))
+        val syncToast = settingSwitch(content, "Toast message", settings.syncToast)
+        val syncVibration = settingSwitch(content, "Vibration", settings.syncVibration)
+        val syncSound = settingSwitch(content, "Sound", settings.syncSound)
+
+        content.addView(title("Change notifications"))
+        val setCreated = settingSwitch(content, "Set created", settings.setCreatedNotifications)
+        val fileAdded = settingSwitch(content, "File added to an existing set", settings.fileAddedNotifications)
+        content.addView(body("Delivery methods"))
+        val changeToast = settingSwitch(content, "Toast message", settings.changeToast)
+        val changeVibration = settingSwitch(content, "Vibration", settings.changeVibration)
+        val changeSound = settingSwitch(content, "Sound", settings.changeSound)
+
+        content.addView(title("Similarity checks"))
+        val checkNames = settingSwitch(content, "Warn when file names don't look alike", state.similarity.checkNames)
+        val checkContent = settingSwitch(content, "Warn when file contents don't look alike", state.similarity.checkContent)
+
+        content.addView(title("Theme"))
+        content.addView(body("Theme: Default. Theme selection is reserved for a later update."))
+
+        conflictResolution.onItemSelectedListener = selectionListener {
+            conflictInterval.container.visibility = if (it == 1) View.VISIBLE else View.GONE
+        }
+        conflictInterval.container.visibility =
+            if (settings.conflictResolution == ConflictResolution.RETRY) View.VISIBLE else View.GONE
+
+        root.addView(actionButton("Save settings") {
+            val syncMinutes = syncInterval.readMinutes()
+            val retryMinutes = conflictInterval.readMinutes()
+            if (syncMinutes == null || retryMinutes == null) {
+                Toast.makeText(
+                    this,
+                    "Enter a valid interval from 1 minute up to 365 days. Sync checks must be at least 15 minutes apart.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                return@actionButton
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            val nextSettings = AppSettings(
+                syncPattern = SyncPattern.entries[pattern.selectedItemPosition],
+                conflictResolution = if (conflictResolution.selectedItemPosition == 0) {
+                    ConflictResolution.PAUSE
+                } else {
+                    ConflictResolution.RETRY
+                },
+                syncIntervalMinutes = syncMinutes,
+                conflictRetryMinutes = retryMinutes,
+                gainFocusOnConflict = gainFocus.isChecked,
+                commentsEnabled = comments.isChecked,
+                autoSyncNotifications = automaticSync.isChecked,
+                singleSetSyncNotifications = singleSync.isChecked,
+                allSetsSyncNotifications = allSync.isChecked,
+                syncToast = syncToast.isChecked,
+                syncVibration = syncVibration.isChecked,
+                syncSound = syncSound.isChecked,
+                setCreatedNotifications = setCreated.isChecked,
+                fileAddedNotifications = fileAdded.isChecked,
+                changeToast = changeToast.isChecked,
+                changeVibration = changeVibration.isChecked,
+                changeSound = changeSound.isChecked,
+                theme = settings.theme,
+            )
+            showingSettings = false
+            updateState(
+                state.copy(
+                    settings = nextSettings,
+                    similarity = SimilaritySettings(checkNames.isChecked, checkContent.isChecked),
+                ),
+            )
+            scheduleForegroundSync(runImmediately = true)
+        })
+    }
+
+    private fun settingSwitch(parent: LinearLayout, label: String, checked: Boolean) =
+        Switch(this).apply {
+            text = label
+            isChecked = checked
+            setPadding(0, dp(4), 0, dp(4))
+            parent.addView(this)
+        }
+
+    private fun spinner(items: List<String>, selected: Int) = Spinner(this).apply {
+        adapter = ArrayAdapter(
+            this@MainActivity,
+            android.R.layout.simple_spinner_item,
+            items,
+        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        setSelection(selected)
+    }
+
+    private data class IntervalControl(
+        val container: LinearLayout,
+        val readMinutes: () -> Long?,
+    )
+
+    private fun intervalControl(
+        parent: LinearLayout,
+        label: String,
+        initialMinutes: Long,
+        presets: List<Long>,
+        minimum: Long,
+    ): IntervalControl {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        container.addView(body(label))
+        val labels = presets.map(::formatMinutes) + "Custom"
+        val choice = spinner(labels, presets.indexOf(initialMinutes).takeIf { it >= 0 } ?: presets.size)
+        container.addView(choice)
+        val customValue = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "Enter a number"
+            val initialIsPreset = presets.contains(initialMinutes)
+            setText(if (initialIsPreset) "" else if (initialMinutes % 60L == 0L) {
+                (initialMinutes / 60L).toString()
+            } else {
+                initialMinutes.toString()
+            })
+        }
+        val customUnit = spinner(listOf("Minutes", "Hours"), if (initialMinutes % 60L == 0L && initialMinutes >= 60L) 1 else 0)
+        val customRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(customValue, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(customUnit, LinearLayout.LayoutParams(0, -2, 1f))
+            visibility = if (choice.selectedItemPosition == presets.size) View.VISIBLE else View.GONE
+        }
+        container.addView(customRow)
+        choice.onItemSelectedListener = selectionListener {
+            customRow.visibility = if (it == presets.size) View.VISIBLE else View.GONE
+        }
+        parent.addView(container)
+        return IntervalControl(container) {
+            if (choice.selectedItemPosition < presets.size) {
+                presets[choice.selectedItemPosition]
+            } else {
+                val value = customValue.text.toString().toLongOrNull() ?: return@IntervalControl null
+                val multiplier = if (customUnit.selectedItemPosition == 1) 60L else 1L
+                if (value < 1 || value > Long.MAX_VALUE / multiplier) return@IntervalControl null
+                (value * multiplier).takeIf { it in minimum..MAX_INTERVAL_MINUTES }
+            }
+        }
+    }
+
+    private fun selectionListener(onSelected: (Int) -> Unit) =
+        object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long,
+            ) = onSelected(position)
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        }
+
+    private fun formatMinutes(minutes: Long): String {
+        if (minutes % 60L != 0L) return "$minutes minutes"
+        val hours = minutes / 60L
+        return "$hours hour${if (hours == 1L) "" else "s"}"
+    }
+
+    private fun scheduleForegroundSync(runImmediately: Boolean, delayMillis: Long? = null) {
+        foregroundHandler.removeCallbacks(foregroundSync)
+        if (!SyncSettingsPolicy.shouldRunWhileForeground(state.settings.syncPattern, hasWindowFocus)) return
+        if (runImmediately) {
+            foregroundHandler.post(foregroundSync)
+        } else {
+            foregroundHandler.postDelayed(
+                foregroundSync,
+                delayMillis ?: state.settings.syncIntervalMinutes * 60_000L,
+            )
+        }
     }
 
     private fun scheduleSync() {
         val scheduler = getSystemService(JOB_SCHEDULER_SERVICE) as JobScheduler
+        if (!SyncSettingsPolicy.shouldScheduleBackground(state.settings.syncPattern)) {
+            scheduler.cancel(SYNC_JOB_ID)
+            return
+        }
         val component = ComponentName(this, LocalSyncJobService::class.java)
         val job = JobInfo.Builder(SYNC_JOB_ID, component)
             .setPersisted(true)
-            .setPeriodic(SYNC_INTERVAL_MS)
+            .setPeriodic(state.settings.syncIntervalMinutes * 60_000L)
             .build()
-        scheduler.schedule(job)
+        if (scheduler.schedule(job) != JobScheduler.RESULT_SUCCESS) {
+            showError("Android could not schedule background syncing. Check the device's battery or job-scheduling restrictions.")
+        }
     }
 
     private fun updateSet(profile: Profile, set: SyncSet) =
@@ -882,11 +1218,13 @@ class MainActivity : Activity() {
         updateState(state.copy(profiles = state.profiles.map { if (it.id == profile.id) profile else it }))
 
     private fun updateState(next: AppState) {
+        val settingsChanged = next.settings != state.settings
         synchronized(StateStore.processLock) {
             try {
                 store.save(next)
                 state = next
                 refresh()
+                if (settingsChanged) scheduleSync()
             } catch (error: IOException) {
                 showError("Could not save app data: ${error.message}")
             }
@@ -906,6 +1244,31 @@ class MainActivity : Activity() {
         if (isFinishing) return
         AlertDialog.Builder(this).setTitle("File Sync").setMessage(message)
             .setPositiveButton("OK", null).show()
+    }
+
+    private fun showConflictLaunchMessage(intent: Intent?) {
+        val setId = intent?.getStringExtra(LocalSyncJobService.EXTRA_CONFLICT_SET_ID) ?: return
+        val setName = intent.getStringExtra(LocalSyncJobService.EXTRA_CONFLICT_SET_NAME) ?: "a set"
+        intent.removeExtra(LocalSyncJobService.EXTRA_CONFLICT_SET_ID)
+        intent.removeExtra(LocalSyncJobService.EXTRA_CONFLICT_SET_NAME)
+        window.decorView.post {
+            if (isFinishing) return@post
+            AlertDialog.Builder(this)
+                .setTitle("Sync conflict")
+                .setMessage("The files in \"$setName\" may not belong together. Review the set before syncing.")
+                .setPositiveButton("Review set") { _, _ ->
+                    val profile = state.profiles.firstOrNull { candidate ->
+                        candidate.sets.any { it.id == setId }
+                    }
+                    if (profile != null) {
+                        state = state.copy(activeProfileId = profile.id)
+                        currentSetId = setId
+                        render()
+                    }
+                }
+                .setNegativeButton("Not now", null)
+                .show()
+        }
     }
 
     private fun title(text: String) = TextView(this).apply {
@@ -958,7 +1321,9 @@ class MainActivity : Activity() {
         private const val STATE_PENDING_SET_ID = "pendingSetId"
         private const val REQUEST_FILES = 21
         private const val SYNC_JOB_ID = 51429
-        private const val SYNC_INTERVAL_MS = SyncRunTracker.SYNC_INTERVAL_MS
+        private const val MAX_INTERVAL_MINUTES = 525_600L
+        private val SYNC_INTERVAL_PRESETS = listOf(15L, 30L, 60L, 300L, 720L, 1440L)
+        private val CONFLICT_INTERVAL_PRESETS = listOf(5L, 10L, 15L, 30L, 60L, 300L, 720L, 1440L)
         private val SUPPORTED_TYPES = setOf("txt", "md", "html", "py", "js", "java")
     }
 }

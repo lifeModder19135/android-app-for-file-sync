@@ -25,6 +25,7 @@ class StateStore(context: Context) {
                 }
             }
             val similarity = root.optJSONObject("similarity")
+            val settings = root.optJSONObject("settings")
             AppState(
                 profiles,
                 root.optString("activeProfileId").takeIf { it.isNotBlank() && it != "null" },
@@ -32,6 +33,7 @@ class StateStore(context: Context) {
                     checkNames = similarity?.optBoolean("check names", true) ?: true,
                     checkContent = similarity?.optBoolean("check content", true) ?: true,
                 ),
+                settings.toAppSettings(),
             )
         }
     }
@@ -48,6 +50,7 @@ class StateStore(context: Context) {
                         .put("check names", state.similarity.checkNames)
                         .put("check content", state.similarity.checkContent),
                 )
+                .put("settings", state.settings.toJson())
 
             val stream = file.startWrite()
             try {
@@ -102,6 +105,11 @@ class StateStore(context: Context) {
                                 .takeIf { it.isNotBlank() && it != "null" },
                             similarityApproved = set.optBoolean("similarity approved", false),
                             syncEnabled = set.optBoolean("sync enabled", true),
+                            conflictRetryAt = if (set.has("conflict retry at") && !set.isNull("conflict retry at")) {
+                                set.getLong("conflict retry at")
+                            } else {
+                                null
+                            },
                         ),
                     )
                 }
@@ -134,6 +142,7 @@ class StateStore(context: Context) {
                             .put("master file location", set.masterFileLocation)
                             .put("similarity approved", set.similarityApproved)
                             .put("sync enabled", set.syncEnabled)
+                            .put("conflict retry at", set.conflictRetryAt)
                             .put(
                                 "files",
                                 JSONArray().apply {
@@ -156,6 +165,59 @@ class StateStore(context: Context) {
     private fun JSONArray.toStringList() = buildList {
         for (index in 0 until length()) add(getString(index))
     }
+
+    private fun JSONObject?.toAppSettings(): AppSettings {
+        val json = this ?: return AppSettings()
+        return AppSettings(
+            syncPattern = enumValueOrDefault(
+                json.optString("sync pattern"),
+                SyncPattern.AGGRESSIVE,
+            ),
+            conflictResolution = enumValueOrDefault(
+                json.optString("conflict resolution"),
+                ConflictResolution.PAUSE,
+            ),
+            syncIntervalMinutes = json.optLong("sync interval minutes", 15).coerceIn(15, 525_600),
+            conflictRetryMinutes = json.optLong("conflict retry minutes", 15).coerceIn(1, 525_600),
+            gainFocusOnConflict = json.optBoolean("gain focus on conflict", false),
+            commentsEnabled = json.optBoolean("comments enabled", true),
+            autoSyncNotifications = json.optBoolean("auto sync notifications", true),
+            singleSetSyncNotifications = json.optBoolean("single set sync notifications", true),
+            allSetsSyncNotifications = json.optBoolean("all sets sync notifications", true),
+            syncToast = json.optBoolean("sync toast", true),
+            syncVibration = json.optBoolean("sync vibration", false),
+            syncSound = json.optBoolean("sync sound", false),
+            setCreatedNotifications = json.optBoolean("set created notifications", false),
+            fileAddedNotifications = json.optBoolean("file added notifications", false),
+            changeToast = json.optBoolean("change toast", false),
+            changeVibration = json.optBoolean("change vibration", false),
+            changeSound = json.optBoolean("change sound", false),
+            theme = json.optString("theme", "Default").ifBlank { "Default" },
+        )
+    }
+
+    private fun AppSettings.toJson() = JSONObject()
+        .put("sync pattern", syncPattern.name)
+        .put("conflict resolution", conflictResolution.name)
+        .put("sync interval minutes", syncIntervalMinutes)
+        .put("conflict retry minutes", conflictRetryMinutes)
+        .put("gain focus on conflict", gainFocusOnConflict)
+        .put("comments enabled", commentsEnabled)
+        .put("auto sync notifications", autoSyncNotifications)
+        .put("single set sync notifications", singleSetSyncNotifications)
+        .put("all sets sync notifications", allSetsSyncNotifications)
+        .put("sync toast", syncToast)
+        .put("sync vibration", syncVibration)
+        .put("sync sound", syncSound)
+        .put("set created notifications", setCreatedNotifications)
+        .put("file added notifications", fileAddedNotifications)
+        .put("change toast", changeToast)
+        .put("change vibration", changeVibration)
+        .put("change sound", changeSound)
+        .put("theme", theme)
+
+    private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String, default: T): T =
+        enumValues<T>().firstOrNull { it.name == value } ?: default
 
     companion object {
         internal val processLock = Any()
